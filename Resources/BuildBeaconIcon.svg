@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="title description">
+  <title id="title">Build Beacon</title>
+  <desc id="description">A blue build status beacon emitting light</desc>
+  <defs>
+    <linearGradient id="dome" x1="64" y1="56" x2="128" y2="132" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#55C7FF"/>
+      <stop offset="0.52" stop-color="#168BFF"/>
+      <stop offset="1" stop-color="#0B5FD7"/>
+    </linearGradient>
+    <linearGradient id="base" x1="53" y1="133" x2="139" y2="165" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#24364B"/>
+      <stop offset="1" stop-color="#101A28"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="50" y1="50" x2="142" y2="142" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#79D8FF"/>
+      <stop offset="1" stop-color="#0878F9"/>
+    </linearGradient>
+    <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <g fill="none" stroke="url(#glow)" stroke-linecap="round">
+    <path d="M42 69 25 58" stroke-width="8"/>
+    <path d="M35 94H15" stroke-width="8"/>
+    <path d="m42 119-17 11" stroke-width="8"/>
+    <path d="m150 69 17-11" stroke-width="8"/>
+    <path d="M157 94h20" stroke-width="8"/>
+    <path d="m150 119 17 11" stroke-width="8"/>
+  </g>
+
+  <path d="M62 132V92c0-21 15-38 34-38s34 17 34 38v40" fill="#168BFF" opacity=".22" filter="url(#softGlow)"/>
+  <path d="M60 132V92c0-22 16-40 36-40s36 18 36 40v40H60Z" fill="url(#dome)" stroke="#D9F3FF" stroke-width="4"/>
+  <path d="M74 91c0-13 9-24 20-24" stroke="#CFF2FF" stroke-width="7" stroke-linecap="round" opacity=".88"/>
+  <path d="M53 132h86l8 25a7 7 0 0 1-7 9H52a7 7 0 0 1-7-9l8-25Z" fill="url(#base)" stroke="#4F6B88" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M58 148h76" stroke="#75B9F5" stroke-width="5" stroke-linecap="round" opacity=".78"/>
+  <circle cx="96" cy="110" r="7" fill="#EAF9FF" opacity=".92"/>
+</svg>

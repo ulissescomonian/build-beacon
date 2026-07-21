@@ -1,0 +1,33 @@
+# Swift Package Manager and Xcode build products
+.build/
+DerivedData/
+build/
+dist/
+
+# macOS Finder and Xcode user state
+.DS_Store
+xcuserdata/
+*.xcuserdatad/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.xcworkspace/xcuserdata/
+
+# Xcode archives and exported distribution artifacts
+*.xcarchive/
+*.dmg
+*.zip
+*.sha256
+
+# Local environment files and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.p8
+*.cer
+*.crt
+*.mobileprovision
+*.provisionprofile
