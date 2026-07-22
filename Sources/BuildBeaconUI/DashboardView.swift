@@ -136,6 +136,7 @@ public struct DashboardView: View {
                                         observation: observation,
                                         refreshIntervalSeconds: model.refreshIntervalSeconds,
                                         isUnseen: model.isActivityUnseen(observation),
+                                        isFavoriteToggleDisabled: model.isMutatingMonitors,
                                         toggleFavorite: {
                                             Task { await model.toggleFavorite(for: observation.monitor.id) }
                                         }
@@ -312,6 +313,7 @@ private struct MonitorDashboardRow: View {
     let observation: MonitorObservation
     let refreshIntervalSeconds: Int
     let isUnseen: Bool
+    let isFavoriteToggleDisabled: Bool
     let toggleFavorite: () -> Void
 
     private var state: ObservationVisualState {
@@ -369,6 +371,7 @@ private struct MonitorDashboardRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
+            .disabled(isFavoriteToggleDisabled)
             .help(observation.monitor.isFavorite ? "Remove from favorites" : "Add to favorites")
             .accessibilityLabel(observation.monitor.isFavorite ? "Remove \(observation.monitor.repositoryName) from favorites" : "Add \(observation.monitor.repositoryName) to favorites")
 

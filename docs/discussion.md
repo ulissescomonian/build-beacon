@@ -1290,3 +1290,38 @@ opt-in omitida. Testes adversariais cobrem gravações sobrepostas, rollback,
 atividade nova durante persistência, barreiras de troca de conta e descarte de
 operações obsoletas. Build release, verificação de diff e revisão independente
 foram aprovados sem achados altos ou médios remanescentes.
+
+### 21.20 Favoritos lineares e intenção mais recente
+
+A primeira implementação otimista ainda descartava cliques válidos enquanto o
+indicador global `isMutatingMonitors` estivesse ativo. Isso fazia a estrela
+parecer intermitente: uma ação em voo bloqueava tanto favoritar quanto remover
+um favorito, mesmo quando a nova intenção do usuário era inequívoca.
+
+Cada clique válido agora atualiza imediatamente o estado apresentado e registra
+a intenção desejada por `MonitorID`. As gravações são persistidas em série para
+esse monitor, sem bloquear interações com os demais. Uma falha de uma gravação
+antiga não pode vencer uma intenção posterior: somente se a última intenção
+pendente falhar a UI retorna ao valor confirmado. Adições e remoções estruturais
+de monitores continuam bloqueadas enquanto houver favoritos pendentes, para não
+misturar a mutação de coleção com a persistência de preferência; durante uma
+mutação estrutural, a estrela fica explicitamente desabilitada. Gravações
+pendentes de favoritos, por si só, nunca desabilitam a estrela.
+
+A animação de reorder permanece exclusivamente ligada a uma mudança real de
+posição causada pelo favorito e é suprimida com Reduce Motion. Ela não é usada
+como sinal de conclusão de I/O nem dispara para um clique que não altere a
+ordem. Assim, a resposta da estrela é imediata e confiável, enquanto a
+continuidade espacial só aparece quando há movimento efetivo na lista.
+
+Critérios desta decisão: toda alternância válida é aceita durante persistência
+anterior; o último valor desejado por monitor prevalece sobre falhas antigas; a
+última falha retorna ao valor confirmado; operações estruturais aguardam a fila
+de favoritos e desabilitam explicitamente a estrela enquanto durarem; e
+animação e acessibilidade preservam as regras da decisão 21.19.
+
+Os testes focados executaram 54 cenários sem falhas. A suíte completa executou
+188 testes sem falhas, com 1 integração Keychain opt-in omitida. Build release e
+verificação de diff foram aprovados. A revisão independente não deixou achados
+altos ou médios após tornar explícita a indisponibilidade da estrela durante
+mutações estruturais.

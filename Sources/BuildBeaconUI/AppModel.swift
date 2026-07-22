@@ -67,6 +67,13 @@ public final class AppModel {
     /// Invalidates configuration writes that belonged to a prior account session.
     /// Cancelling a task alone cannot stop an I/O operation that has already begun.
     private var configurationPersistenceGeneration = 0
+    /// Favorite clicks are intentionally allowed to overlap. Track their outstanding
+    /// saves independently from structural monitor mutations: a user must never need
+    /// to wait for disk I/O before correcting a star click, while add/remove still
+    /// cannot race a pending favorite snapshot.
+    private var pendingFavoritePersistenceCount = 0
+    private var favoriteMutationGeneration: [MonitorID: Int] = [:]
+    private var confirmedFavoriteState: [MonitorID: Bool] = [:]
 
     public var configuration = AppConfiguration()
     public var snapshot: MonitoringSnapshot?
@@ -361,6 +368,7 @@ public final class AppModel {
         target: MonitorTarget
     ) async -> Int {
         guard !isMutatingMonitors,
+              pendingFavoritePersistenceCount == 0,
               let account = configuration.account,
               let workspace = selectedWorkspace else { return 0 }
 
@@ -409,12 +417,14 @@ public final class AppModel {
     }
 
     public func removeMonitor(_ id: MonitorID) async {
-        guard !isMutatingMonitors else { return }
+        guard !isMutatingMonitors, pendingFavoritePersistenceCount == 0 else { return }
         isMutatingMonitors = true
         defer { isMutatingMonitors = false }
         let monitors = configuration.monitors.filter { $0.id != id }
         do {
             apply(configuration: try await runtime.setMonitors(monitors))
+            confirmedFavoriteState[id] = nil
+            favoriteMutationGeneration[id] = nil
             if selectedMonitorID == id { selectedMonitorID = nil }
             await refresh()
         } catch {
@@ -425,7 +435,12 @@ public final class AppModel {
     public func toggleFavorite(for id: MonitorID) async {
         guard !isMutatingMonitors,
               let index = configuration.monitors.firstIndex(where: { $0.id == id }) else { return }
-        let previous = configuration
+        let previousPinnedState = configuration.monitors[index].isPinned
+        let mutation = (favoriteMutationGeneration[id] ?? 0) + 1
+        favoriteMutationGeneration[id] = mutation
+        if confirmedFavoriteState[id] == nil {
+            confirmedFavoriteState[id] = previousPinnedState
+        }
         var updated = configuration
         updated.monitors[index].isPinned.toggle()
         // Updating the in-memory configuration before persisting keeps the favorite
@@ -433,14 +448,31 @@ public final class AppModel {
         // embedded in the latest polling snapshot, so sorting and detail views do
         // not wait for another refresh to reflect this change.
         apply(configuration: updated)
-        isMutatingMonitors = true
-        defer { isMutatingMonitors = false }
+        pendingFavoritePersistenceCount += 1
+        defer { pendingFavoritePersistenceCount -= 1 }
         do {
-            try await persistCurrentConfiguration { [weak self] in
-                self?.restoreFavorite(id: id, previous: previous, expected: updated)
-            }
+            try await persistFavoriteConfiguration(
+                monitorID: id,
+                desiredPinnedState: updated.monitors[index].isPinned,
+                onSuccess: { [weak self] in
+                    // This runs inside the serial write itself, before its
+                    // successor can observe the result as its rollback base.
+                    self?.confirmedFavoriteState[id] = updated.monitors[index].isPinned
+                },
+                onFailure: { [weak self] in
+                    self?.restoreFavorite(
+                        id: id,
+                        mutation: mutation,
+                        fallbackPinnedState: self?.confirmedFavoriteState[id] ?? previousPinnedState
+                    )
+                }
+            )
         } catch {
-            errorMessage = Self.message(for: error)
+            // An older failed save is superseded by a later click and must neither
+            // roll back nor distract the user from that newer intent.
+            if favoriteMutationGeneration[id] == mutation {
+                errorMessage = Self.message(for: error)
+            }
         }
     }
 
@@ -698,6 +730,48 @@ public final class AppModel {
                 result.error = error
                 return
             }
+        }
+        configurationPersistenceTask = task
+        await task.value
+        if let error = result.error { throw error }
+    }
+
+    /// Captures one optimistic favorite intent, but applies only its pinned field
+    /// after its predecessor settles.
+    /// That preserves unrelated rollbacks and prevents one monitor's stale snapshot
+    /// from reintroducing another monitor's failed favorite.
+    private func persistFavoriteConfiguration(
+        monitorID: MonitorID,
+        desiredPinnedState: Bool,
+        onSuccess: @escaping @MainActor () -> Void,
+        onFailure: @escaping @MainActor () -> Void
+    ) async throws {
+        let result = ConfigurationPersistenceResult()
+        let predecessor = configurationPersistenceTask
+        let generation = configurationPersistenceGeneration
+        let accountID = self.configuration.account?.id
+        let task = Task { @MainActor [weak self] in
+            await predecessor?.value
+            guard let self else { return }
+            guard self.isCurrentConfigurationPersistence(generation: generation, accountID: accountID) else {
+                return
+            }
+            do {
+                var configurationToPersist = self.configuration
+                guard let monitorIndex = configurationToPersist.monitors.firstIndex(where: { $0.id == monitorID }) else {
+                    return
+                }
+                configurationToPersist.monitors[monitorIndex].isPinned = desiredPinnedState
+                _ = try await self.runtime.saveConfiguration(configurationToPersist)
+                onSuccess()
+            } catch {
+                guard self.isCurrentConfigurationPersistence(generation: generation, accountID: accountID) else {
+                    return
+                }
+                onFailure()
+                result.error = error
+                return
+            }
             guard self.isCurrentConfigurationPersistence(generation: generation, accountID: accountID) else {
                 return
             }
@@ -743,14 +817,12 @@ public final class AppModel {
 
     private func restoreFavorite(
         id: MonitorID,
-        previous: AppConfiguration,
-        expected: AppConfiguration
+        mutation: Int,
+        fallbackPinnedState: Bool
     ) {
         guard let index = configuration.monitors.firstIndex(where: { $0.id == id }),
-              let previousMonitor = previous.monitors.first(where: { $0.id == id }),
-              let expectedMonitor = expected.monitors.first(where: { $0.id == id }),
-              configuration.monitors[index].isPinned == expectedMonitor.isPinned else { return }
-        configuration.monitors[index].isPinned = previousMonitor.isPinned
+              favoriteMutationGeneration[id] == mutation else { return }
+        configuration.monitors[index].isPinned = fallbackPinnedState
         reconcileSnapshotWithCurrentConfiguration()
     }
 
@@ -941,6 +1013,8 @@ public final class AppModel {
         configurationPersistenceGeneration += 1
         configurationPersistenceTask?.cancel()
         configurationPersistenceTask = nil
+        favoriteMutationGeneration = [:]
+        confirmedFavoriteState = [:]
     }
 
     private static func preferredObservation(in snapshot: MonitoringSnapshot) -> MonitorObservation? {

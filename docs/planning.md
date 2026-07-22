@@ -1817,3 +1817,44 @@ Validações do incremento:
 | revisão independente | sem achados altos ou médios após correções |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.20 Incremento entregue — alternância confiável de favoritos
+
+Escopo e ownership:
+
+- estado de favoritos: remover o bloqueio global que descartava uma alternância
+  válida enquanto outra persistência estivesse em voo;
+- persistência: serializar por `MonitorID` e valor desejado, preservando a
+  intenção mais recente e impedindo que uma falha antiga reverta um clique novo;
+- coleção: manter add/remove estruturais bloqueados enquanto favoritos estiverem
+  pendentes, para não concorrer com a preferência otimista, e desabilitar a
+  estrela explicitamente durante a mutação estrutural;
+- UI: manter resposta imediata da estrela e animar somente reordenação real,
+  com Reduce Motion respeitado;
+- documentação: registrar os gates realmente executados, sem antecipar build
+  ou revisão que ainda não ocorreram.
+
+Critérios de aceitação verificados:
+
+- cada clique válido de favoritar ou desfavoritar é aplicado imediatamente,
+  mesmo durante uma persistência anterior;
+- persistências pendentes de favoritos não desabilitam a estrela; somente uma
+  mutação estrutural de add/remove a deixa explicitamente indisponível;
+- favoritos de monitores distintos não bloqueiam a interação uns dos outros;
+- uma falha antiga não substitui intenção posterior; se a última intenção falha,
+  o valor exibido retorna ao último estado confirmado;
+- add/remove de monitores não inicia enquanto existir favorito pendente;
+- a animação existente ocorre somente quando a ordenação realmente muda e fica
+  desativada quando Reduce Motion está ativo.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| testes focados de favorito, rollback, concorrência, reorder e Reduce Motion | 54 testes executados, 0 falhas |
+| `swift test --quiet` | 188 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| `git diff --check` | aprovado |
+| revisão independente | sem achados altos ou médios após correções |
+
+Estado: entregue e aprovado para empacotamento Preview.
