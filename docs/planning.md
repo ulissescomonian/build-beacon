@@ -1858,3 +1858,38 @@ Validações do incremento:
 | revisão independente | sem achados altos ou médios após correções |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.21 Incremento entregue — transação explícita da animação de favoritos
+
+Escopo e ownership:
+
+- modelo de apresentação: expor uma entrada síncrona que aplica imediatamente a
+  intenção otimista e retorna a tarefa responsável pela persistência;
+- UI da lista: iniciar essa entrada dentro da transação explícita do clique e
+  remover a animação implícita vinculada ao conteúdo filtrado;
+- acessibilidade: manter o mesmo resultado sem movimento quando Reduce Motion
+  estiver ativo;
+- documentação e integração: atualizar evidências, build, pacote e publicação
+  depois da validação funcional na aplicação instalada.
+
+Critérios de aceitação verificados:
+
+- favoritar e desfavoritar entram deterministicamente na transação do gesto;
+- o estado e a ordem mudam antes do retorno da entrada síncrona;
+- persistência, rollback e semântica da intenção mais recente permanecem
+  assíncronos e compatíveis com a API anterior;
+- polling e outras mudanças de lista não disparam a animação do favorito;
+- Reduce Motion elimina a transição sem alterar o resultado da ordenação.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| testes focados do modelo e métricas da lista | 55 testes executados, 0 falhas |
+| `swift test --quiet` | 189 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| `git diff --check` | aprovado |
+| revisão independente | sem achados altos ou médios |
+| aplicação instalada | favoritar e desfavoritar confirmados manualmente |
+
+Estado: entregue e aprovado para empacotamento Preview.

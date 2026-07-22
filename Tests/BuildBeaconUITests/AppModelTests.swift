@@ -437,6 +437,42 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(runtime.configuration.monitors[1].isPinned)
     }
 
+    func testBeginFavoriteToggleUpdatesConfigurationAndSnapshotBeforeReturning() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let first = monitor(id: "first", in: workspace, accountID: model.configuration.account!.id)
+        let favorite = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [first, favorite]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: .now,
+            completedAt: .now,
+            reason: .scheduled,
+            observations: [
+                first.id: MonitorObservation(monitor: first),
+                favorite.id: MonitorObservation(monitor: favorite)
+            ],
+            aggregateState: .healthy
+        )
+        await model.refresh()
+        runtime.suspendsConfigurationSave = true
+
+        let persistence = model.beginFavoriteToggle(for: favorite.id)
+
+        XCTAssertNotNil(persistence)
+        XCTAssertTrue(model.configuration.monitors[1].isPinned)
+        XCTAssertTrue(model.snapshot?.observations[favorite.id]?.monitor.isPinned == true)
+        XCTAssertEqual(model.sortedObservations.map(\.monitor.id), [favorite.id, first.id])
+        XCTAssertFalse(runtime.configuration.monitors[1].isPinned)
+
+        await runtime.waitForConfigurationSave()
+        XCTAssertFalse(runtime.configuration.monitors[1].isPinned)
+        runtime.resumeConfigurationSave()
+        await persistence?.value
+
+        XCTAssertTrue(runtime.configuration.monitors[1].isPinned)
+    }
+
     func testToggleFavoriteRestoresVisibleSnapshotWhenConfigurationSaveFails() async {
         let (model, runtime, workspace) = makeConnectedModel()
         let favorite = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)

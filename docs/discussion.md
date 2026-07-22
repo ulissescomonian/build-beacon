@@ -1325,3 +1325,27 @@ Os testes focados executaram 54 cenários sem falhas. A suíte completa executou
 verificação de diff foram aprovados. A revisão independente não deixou achados
 altos ou médios após tornar explícita a indisponibilidade da estrela durante
 mutações estruturais.
+
+### 21.21 Reordenação animada na transação do clique
+
+A animação implícita anteriormente observava a lista já reordenada, enquanto a
+mutação otimista acontecia dentro de uma tarefa assíncrona. Essa separação fazia
+a mesma mudança visual ocorrer algumas vezes dentro e outras fora da transação
+de animação, embora o estado final do favorito estivesse correto.
+
+O clique agora inicia sincronamente a mutação otimista e a reordenação dentro de
+uma transação explícita de animação. Somente depois disso a persistência segue em
+uma tarefa retornada pelo modelo. A lista não mantém mais uma animação implícita
+por identidade, evitando que polling, rollback ou outras atualizações animem por
+acidente. Com Reduce Motion ativo, a mesma transação atualiza o estado sem
+movimento.
+
+Critérios desta decisão: cada clique válido que altera a ordem participa da
+transação explícita; adicionar e retirar a estrela usam o mesmo caminho; a
+persistência continua assíncrona e confiável; atualizações sem gesto não ganham
+animação incidental; e Reduce Motion continua respeitado.
+
+O gate consolidado executou 55 testes focados e 189 testes completos sem falhas,
+com 1 integração Keychain opt-in omitida. Build release, verificação de diff e
+revisão independente foram aprovados sem achados altos ou médios. A alternância
+nos dois sentidos também foi confirmada manualmente na aplicação instalada.

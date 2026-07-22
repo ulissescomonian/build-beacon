@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Universal-arm64%20%2B%20x86__64-6E56CF?style=flat-square" alt="Universal arm64 and x86 64" />
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?style=flat-square" alt="Swift 6.2" />
   <img src="https://img.shields.io/badge/UI-native%20SwiftUI-147EFB?style=flat-square" alt="Native SwiftUI" />
-  <img src="https://img.shields.io/badge/tests-188-34A853?style=flat-square" alt="188 tests" />
+  <img src="https://img.shields.io/badge/tests-189-34A853?style=flat-square" alt="189 tests" />
   <img src="https://img.shields.io/badge/status-Preview-D97706?style=flat-square" alt="Preview status" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-586069?style=flat-square" alt="MIT License" /></a>
 </p>
@@ -223,7 +223,7 @@ Packaging creates a local artifact; it does not publish a release, notarize the 
 
 ## Testing
 
-The current suite contains **188 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
+The current suite contains **189 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
 
 ```bash
 swift test

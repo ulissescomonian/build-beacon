@@ -138,7 +138,15 @@ public struct DashboardView: View {
                                         isUnseen: model.isActivityUnseen(observation),
                                         isFavoriteToggleDisabled: model.isMutatingMonitors,
                                         toggleFavorite: {
-                                            Task { await model.toggleFavorite(for: observation.monitor.id) }
+                                            withAnimation(
+                                                reduceMotion
+                                                    ? nil
+                                                    : .easeInOut(
+                                                        duration: DashboardRepositoryRowMetrics.favoriteReorderAnimationDuration
+                                                    )
+                                            ) {
+                                                _ = model.beginFavoriteToggle(for: observation.monitor.id)
+                                            }
                                         }
                                     )
                                     .tag(observation.monitor.id)
@@ -156,12 +164,6 @@ public struct DashboardView: View {
                             }
                         }
                     }
-                    .animation(
-                        reduceMotion
-                            ? nil
-                            : .easeInOut(duration: DashboardRepositoryRowMetrics.favoriteReorderAnimationDuration),
-                        value: filtered.map(\.monitor.id)
-                    )
                 }
             }
             .navigationTitle("Pipelines")

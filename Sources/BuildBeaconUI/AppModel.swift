@@ -432,9 +432,14 @@ public final class AppModel {
         }
     }
 
-    public func toggleFavorite(for id: MonitorID) async {
+    /// Applies a favorite intent synchronously so SwiftUI can include the changed
+    /// sort order in the caller's animation transaction, then persists it in the
+    /// background. The returned task settles the optimistic change or rolls it
+    /// back when the write fails.
+    @discardableResult
+    public func beginFavoriteToggle(for id: MonitorID) -> Task<Void, Never>? {
         guard !isMutatingMonitors,
-              let index = configuration.monitors.firstIndex(where: { $0.id == id }) else { return }
+              let index = configuration.monitors.firstIndex(where: { $0.id == id }) else { return nil }
         let previousPinnedState = configuration.monitors[index].isPinned
         let mutation = (favoriteMutationGeneration[id] ?? 0) + 1
         favoriteMutationGeneration[id] = mutation
@@ -449,31 +454,40 @@ public final class AppModel {
         // not wait for another refresh to reflect this change.
         apply(configuration: updated)
         pendingFavoritePersistenceCount += 1
-        defer { pendingFavoritePersistenceCount -= 1 }
-        do {
-            try await persistFavoriteConfiguration(
-                monitorID: id,
-                desiredPinnedState: updated.monitors[index].isPinned,
-                onSuccess: { [weak self] in
-                    // This runs inside the serial write itself, before its
-                    // successor can observe the result as its rollback base.
-                    self?.confirmedFavoriteState[id] = updated.monitors[index].isPinned
-                },
-                onFailure: { [weak self] in
-                    self?.restoreFavorite(
-                        id: id,
-                        mutation: mutation,
-                        fallbackPinnedState: self?.confirmedFavoriteState[id] ?? previousPinnedState
-                    )
+        let desiredPinnedState = updated.monitors[index].isPinned
+        return Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.pendingFavoritePersistenceCount -= 1 }
+            do {
+                try await self.persistFavoriteConfiguration(
+                    monitorID: id,
+                    desiredPinnedState: desiredPinnedState,
+                    onSuccess: { [weak self] in
+                        // This runs inside the serial write itself, before its
+                        // successor can observe the result as its rollback base.
+                        self?.confirmedFavoriteState[id] = desiredPinnedState
+                    },
+                    onFailure: { [weak self] in
+                        self?.restoreFavorite(
+                            id: id,
+                            mutation: mutation,
+                            fallbackPinnedState: self?.confirmedFavoriteState[id] ?? previousPinnedState
+                        )
+                    }
+                )
+            } catch {
+                // An older failed save is superseded by a later click and must neither
+                // roll back nor distract the user from that newer intent.
+                if self.favoriteMutationGeneration[id] == mutation {
+                    self.errorMessage = Self.message(for: error)
                 }
-            )
-        } catch {
-            // An older failed save is superseded by a later click and must neither
-            // roll back nor distract the user from that newer intent.
-            if favoriteMutationGeneration[id] == mutation {
-                errorMessage = Self.message(for: error)
             }
         }
+    }
+
+    /// Compatibility API for callers that need persistence completion.
+    public func toggleFavorite(for id: MonitorID) async {
+        await beginFavoriteToggle(for: id)?.value
     }
 
     public func setRefreshInterval(_ seconds: Int) async {
