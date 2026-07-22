@@ -1349,3 +1349,34 @@ O gate consolidado executou 55 testes focados e 189 testes completos sem falhas,
 com 1 integração Keychain opt-in omitida. Build release, verificação de diff e
 revisão independente foram aprovados sem achados altos ou médios. A alternância
 nos dois sentidos também foi confirmada manualmente na aplicação instalada.
+
+### 21.22 Reabertura pelo Dock e acesso contextual aos ajustes
+
+O ícone de aplicativo no Dock não pode ser um destino sem ação quando a pessoa
+o fixa manualmente e não há dashboard aberto. Uma solicitação de reabertura do
+macOS — inclusive o clique nesse tile fixado — passa pelo mesmo coordenador
+único de janelas usado pela menu bar, atalhos, notificações e ações contextuais.
+Assim, ela aplica o contrato **abrir ou focar**: cria o dashboard quando ele não
+existe; caso exista, restaura-o se minimizado, ativa o aplicativo e dá foco à
+mesma janela. O fluxo não cria uma segunda janela e continua sujeito à política
+normal de ativação do macOS, sem comportamento sempre acima.
+
+O dashboard também oferece um controle nativo de Settings na toolbar, com
+símbolo, rótulo acessível e dica de ajuda. A ação abre ou foca a única cena de
+ajustes já existente; não cria um painel de configuração paralelo dentro do
+dashboard. A menu bar e o atalho padrão Command-Comma permanecem rotas
+equivalentes para a mesma cena, de modo que nenhuma superfície passe a ser
+obrigatória para operar o aplicativo.
+
+Essa decisão preserva a presença prioritária na menu bar e a política transitória
+do Dock: o tile pode iniciar uma sessão de dashboard quando estiver fixado, mas
+fechar o dashboard continua devolvendo o aplicativo ao modo acessório e não
+interrompe polling, notificações ou estado local.
+
+Critérios de aceite deste incremento: clicar no tile do Dock sem dashboard abre
+uma única janela; clicar com dashboard aberto ou minimizado restaura e foca essa
+instância; o botão de Settings do dashboard abre ou foca a cena existente e é
+acessível por teclado e VoiceOver; menu bar e Command-Comma preservam o mesmo
+destino; e nenhuma dessas rotas muda a política de monitoramento em segundo
+plano. As evidências de testes, build, revisão independente e QA visual estão
+registradas no planejamento após a integração.

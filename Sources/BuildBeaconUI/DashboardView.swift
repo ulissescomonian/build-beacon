@@ -4,6 +4,7 @@ import SwiftUI
 public struct DashboardView: View {
     @Bindable private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openSettings) private var openSettings
     @State private var filter: DashboardFilter = .all
     @State private var projectFilter: DashboardProjectFilter = .all
     @State private var searchText = ""
@@ -194,6 +195,16 @@ public struct DashboardView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    openSettings()
+                } label: {
+                    Label("Open Settings", systemImage: "gearshape")
+                }
+                .help("Open Settings")
+                .accessibilityLabel("Open Settings")
+            }
+
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await model.refresh() }

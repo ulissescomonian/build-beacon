@@ -4,6 +4,8 @@ import SwiftUI
 
 @main
 struct BuildBeaconApp: App {
+    @NSApplicationDelegateAdaptor(BuildBeaconApplicationDelegate.self)
+    private var applicationDelegate
     @State private var model: AppModel
     @State private var lifecycle: AppLifecycleCoordinator
     @State private var dashboardPresentation: DashboardPresentationController
@@ -24,6 +26,9 @@ struct BuildBeaconApp: App {
         _model = State(initialValue: model)
         _lifecycle = State(initialValue: lifecycle)
         _dashboardPresentation = State(initialValue: dashboardPresentation)
+        applicationDelegate.install(reopenHandler: {
+            dashboardPresentation.openDashboard()
+        })
         lifecycle.start()
     }
 

@@ -1893,3 +1893,51 @@ Validações do incremento:
 | aplicação instalada | favoritar e desfavoritar confirmados manualmente |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.22 Incremento entregue — reabertura pelo Dock e Settings no dashboard
+
+Escopo e ownership:
+
+- ciclo de vida e coordenador de janela: tratar a solicitação de reabertura do
+  macOS, inclusive o clique em um tile do Dock fixado sem dashboard, como mais
+  uma rota para o coordenador único abrir-ou-focar;
+- dashboard UI: incluir um controle nativo e acessível de Settings na toolbar,
+  sem criar uma segunda superfície de configuração;
+- documentação: manter README, decisão, aceite e a contagem pública atual
+  coerentes com os gates executados.
+
+Contrato estabilizado:
+
+- clique no Dock com dashboard ausente cria o dashboard por meio do coordenador
+  único;
+- clique no Dock com dashboard aberto ou minimizado restaura, ativa e foca a
+  instância existente;
+- pedidos concorrentes continuam coalescidos e nunca criam dashboards
+  duplicados;
+- o controle de Settings abre ou foca a cena de ajustes existente, preservando
+  as rotas pela menu bar e Command-Comma;
+- o botão tem nome, dica e navegação por teclado adequados e usa texto
+  localizado em inglês e pt-BR;
+- fechar o dashboard preserva menu bar, polling, notificações e estado local.
+
+Critérios de aceite verificados:
+
+- um tile fixado no Dock deixa de ser inerte quando não há dashboard;
+- reabrir pelo Dock não duplica janelas e restaura uma janela minimizada;
+- Settings é alcançável tanto na toolbar do dashboard quanto pelas rotas
+  existentes;
+- a interação é coberta por testes determinísticos, além dos gates regulares
+  do repositório.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| `swift test --quiet` | 192 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| bundle universal ad-hoc | build, assinatura e validação do bundle aprovados |
+| QA visual | reabertura após fechamento e Settings confirmados no bundle local; clique físico no tile do Dock não exposto pela automação |
+| revisão independente | sem achados altos ou médios; achado baixo de ajuda contextual corrigido |
+| `git diff --check` | aprovado na checagem consolidada |
+
+Estado: entregue e aprovado para empacotamento Preview.

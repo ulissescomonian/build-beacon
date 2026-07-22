@@ -37,6 +37,11 @@ let package = Package(
             dependencies: ["BuildBeaconUI", "BuildBeaconKit"],
             path: "Tests/BuildBeaconUITests"
         ),
+        .testTarget(
+            name: "BuildBeaconAppTests",
+            dependencies: ["BuildBeacon"],
+            path: "Tests/BuildBeaconAppTests"
+        ),
     ],
     swiftLanguageModes: [.v6]
 )
