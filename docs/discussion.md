@@ -1253,3 +1253,40 @@ remove o Dock sem desligar o monitoramento; e os dois ícones preservam suas
 funções visuais separadas. O gate consolidado executou 170 testes sem falhas,
 com 1 integração Keychain opt-in omitida; build release, bundle universal,
 ícone nativo, assinatura, diff e revisão independente foram aprovados.
+
+### 21.19 Linhas de repositório clicáveis e favoritismo responsivo
+
+A linha de repositório é uma única área de seleção: todo o espaço textual e
+vazio visível da célula deve selecionar o monitor, inclusive nome, metadados e
+regiões de preenchimento. Controles internos preservam ações exclusivas; em
+particular, a estrela alterna somente o favorito e não pode ser interpretada
+como seleção da linha. A implementação deve evitar que views de texto, ícones
+decorativos ou overlays transparentes absorvam o gesto que pertence à linha.
+
+Favoritar responde imediatamente ao gesto com estado otimista e feedback visual
+local. A persistência acontece de modo assíncrono e não pode atrasar o clique,
+o desenho da interface ou a seleção. Caso a gravação falhe, a interface reverte
+o favorito ao estado previamente confirmado e apresenta o tratamento de erro
+existente, sem deixar um favorito aparente que não sobreviveria ao relançamento.
+Snapshots de monitoramento e a atualização de favoritos são fluxos distintos:
+um snapshot recebido não deve reintroduzir latência na interação nem sobrescrever
+uma intenção local mais recente.
+
+O favorito continua a ter prioridade de ordenação. Quando essa prioridade muda
+a posição da linha, a reordenação é animada de forma explícita para preservar a
+continuidade espacial; com Reduce Motion ativo, a atualização permanece correta
+e acessível, mas sem movimento desnecessário. A seleção é identificada pelo
+monitor, e não por índice, portanto permanece no mesmo repositório mesmo que a
+linha se mova, seja atualizada por snapshot ou seja reordenada por favoritismo.
+
+Critérios desta decisão: clicar em qualquer área não interativa da célula
+seleciona o mesmo monitor; a estrela responde sem aguardar I/O e não seleciona a
+linha; falha de persistência reverte o estado otimista; a reordenação tem
+transição perceptível quando movimento é permitido; e seleção, acessibilidade e
+ordem permanecem consistentes através de refreshes concorrentes.
+
+O gate consolidado executou 181 testes sem falhas, com 1 integração Keychain
+opt-in omitida. Testes adversariais cobrem gravações sobrepostas, rollback,
+atividade nova durante persistência, barreiras de troca de conta e descarte de
+operações obsoletas. Build release, verificação de diff e revisão independente
+foram aprovados sem achados altos ou médios remanescentes.

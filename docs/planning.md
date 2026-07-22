@@ -1779,3 +1779,41 @@ Validação final:
 | `git diff --check` e scan público | aprovados |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.19 Incremento entregue — interação e favoritismo da lista de repositórios
+
+Escopo e ownership:
+
+- UI da lista de repositórios: corrigir hit testing para que toda área textual
+  ou vazia da linha selecione o monitor, mantendo a estrela como controle de
+  ação exclusiva;
+- estado/aplicação de favoritos: aplicar feedback otimista, persistir sem
+  bloquear a UI e reverter de forma segura quando a persistência falhar;
+- ordenação e apresentação: animar a mudança de posição causada por favorito,
+  respeitando Reduce Motion e preservando a seleção por identidade do monitor;
+- integrador: preencher as evidências da tabela de validação e atualizar a
+  contagem pública de testes somente após os gates executados.
+
+Critérios de aceitação verificados:
+
+- nome, metadados e espaços vazios da célula selecionam a respectiva linha;
+- a estrela tem hit target confiável, alterna apenas o favorito e não dispara
+  seleção da linha;
+- o feedback de favorito é imediato, enquanto persistência e snapshots não
+  atrasam a interação;
+- erro de persistência restaura o valor confirmado sem corromper a ordenação;
+- favoritos sobem na lista com transição visual quando Reduce Motion está
+  desativado e sem animação desnecessária quando está ativado;
+- a seleção acompanha o mesmo `MonitorID` durante reorder e refresh.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| testes focados de favorito, rollback, concorrência, reorder e Reduce Motion | 47 testes executados, 0 falhas |
+| `swift test --quiet` | 181 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| `git diff --check` | aprovado |
+| revisão independente | sem achados altos ou médios após correções |
+
+Estado: entregue e aprovado para empacotamento Preview.

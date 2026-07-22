@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct DashboardView: View {
     @Bindable private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var filter: DashboardFilter = .all
     @State private var projectFilter: DashboardProjectFilter = .all
     @State private var searchText = ""
@@ -137,9 +138,6 @@ public struct DashboardView: View {
                                         isUnseen: model.isActivityUnseen(observation),
                                         toggleFavorite: {
                                             Task { await model.toggleFavorite(for: observation.monitor.id) }
-                                        },
-                                        markActivitySeen: {
-                                            Task { await model.markActivitySeen(for: observation) }
                                         }
                                     )
                                     .tag(observation.monitor.id)
@@ -157,6 +155,12 @@ public struct DashboardView: View {
                             }
                         }
                     }
+                    .animation(
+                        reduceMotion
+                            ? nil
+                            : .easeInOut(duration: DashboardRepositoryRowMetrics.favoriteReorderAnimationDuration),
+                        value: filtered.map(\.monitor.id)
+                    )
                 }
             }
             .navigationTitle("Pipelines")
@@ -309,7 +313,6 @@ private struct MonitorDashboardRow: View {
     let refreshIntervalSeconds: Int
     let isUnseen: Bool
     let toggleFavorite: () -> Void
-    let markActivitySeen: () -> Void
 
     private var state: ObservationVisualState {
         observation.visualState(refreshIntervalSeconds: refreshIntervalSeconds)
@@ -354,13 +357,16 @@ private struct MonitorDashboardRow: View {
                 .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { markActivitySeen() })
 
             Button(action: toggleFavorite) {
                 Image(systemName: observation.monitor.isFavorite ? "star.fill" : "star")
                     .foregroundStyle(observation.monitor.isFavorite ? .yellow : .secondary)
                     .frame(width: 22, height: 22)
+                    .frame(
+                        width: DashboardRepositoryRowMetrics.favoriteButtonHitTargetSize,
+                        height: DashboardRepositoryRowMetrics.favoriteButtonHitTargetSize
+                    )
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help(observation.monitor.isFavorite ? "Remove from favorites" : "Add to favorites")

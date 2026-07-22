@@ -223,7 +223,7 @@ Packaging creates a local artifact; it does not publish a release, notarize the 
 
 ## Testing
 
-The current suite contains **170 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
+The current suite contains **181 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
 
 ```bash
 swift test

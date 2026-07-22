@@ -3,6 +3,17 @@ import Foundation
 import Observation
 
 @MainActor
+private final class ConfigurationPersistenceResult {
+    var error: (any Error)?
+}
+
+@MainActor
+private final class AccountConfigurationOperationResult {
+    var configuration: AppConfiguration?
+    var error: (any Error)?
+}
+
+@MainActor
 public protocol BuildBeaconRuntime: AnyObject {
     func loadConfiguration() async throws -> AppConfiguration
     func connect(email: String, token: String) async throws -> AppConfiguration
@@ -48,6 +59,14 @@ public final class AppModel {
     /// only the newest marker set durable and prevent an older write from winning.
     private var activityPersistenceGeneration = 0
     private var activityPersistenceTask: Task<Void, Never>?
+    /// All writes that can alter `AppConfiguration` share one chain. A write reads
+    /// the configuration only when its predecessor has settled, preventing a late
+    /// favorite/preferences save from overwriting newer unseen activity (or vice
+    /// versa) in persistence.
+    private var configurationPersistenceTask: Task<Void, Never>?
+    /// Invalidates configuration writes that belonged to a prior account session.
+    /// Cancelling a task alone cannot stop an I/O operation that has already begun.
+    private var configurationPersistenceGeneration = 0
 
     public var configuration = AppConfiguration()
     public var snapshot: MonitoringSnapshot?
@@ -209,7 +228,9 @@ public final class AppModel {
             isBusy = false
         }
         do {
-            let updated = try await runtime.connect(email: submittedEmail, token: submittedToken)
+            let updated = try await performAccountConfigurationOperation {
+                try await self.runtime.connect(email: submittedEmail, token: submittedToken)
+            }
             apply(configuration: updated)
             if let account = updated.account {
                 do {
@@ -234,7 +255,9 @@ public final class AppModel {
         isBusy = true
         defer { isBusy = false }
         do {
-            apply(configuration: try await runtime.revalidate())
+            apply(configuration: try await performAccountConfigurationOperation {
+                try await self.runtime.revalidate()
+            })
         } catch {
             errorMessage = Self.message(for: error)
         }
@@ -245,7 +268,9 @@ public final class AppModel {
         isBusy = true
         defer { isBusy = false }
         do {
-            apply(configuration: try await runtime.disconnect())
+            apply(configuration: try await performAccountConfigurationOperation {
+                try await self.runtime.disconnect()
+            })
             snapshot = nil
             workspaces = []
             repositories = []
@@ -403,12 +428,18 @@ public final class AppModel {
         let previous = configuration
         var updated = configuration
         updated.monitors[index].isPinned.toggle()
+        // Updating the in-memory configuration before persisting keeps the favorite
+        // control responsive. `apply(configuration:)` also replaces the monitor
+        // embedded in the latest polling snapshot, so sorting and detail views do
+        // not wait for another refresh to reflect this change.
+        apply(configuration: updated)
         isMutatingMonitors = true
         defer { isMutatingMonitors = false }
         do {
-            apply(configuration: try await runtime.saveConfiguration(updated))
+            try await persistCurrentConfiguration { [weak self] in
+                self?.restoreFavorite(id: id, previous: previous, expected: updated)
+            }
         } catch {
-            apply(configuration: previous)
             errorMessage = Self.message(for: error)
         }
     }
@@ -631,12 +662,131 @@ public final class AppModel {
         configuration.notifyOnFavoriteSuccess = notifyOnFavoriteSuccess
         configuration.monitorPresentation = monitorPresentation
         configuration.historyEnabled = historyEnabled
+        let expected = configuration
         do {
-            apply(configuration: try await runtime.saveConfiguration(configuration))
+            try await persistCurrentConfiguration { [weak self] in
+                self?.restorePreferences(from: previous, expected: expected)
+            }
         } catch {
-            apply(configuration: previous)
             errorMessage = Self.message(for: error)
         }
+    }
+
+    /// The failure handler runs in the serial persistence task, before its successor
+    /// can capture configuration. This is essential when a newer write is already
+    /// queued behind a failed optimistic change.
+    private func persistCurrentConfiguration(
+        onFailure: @escaping @MainActor () -> Void
+    ) async throws {
+        let result = ConfigurationPersistenceResult()
+        let predecessor = configurationPersistenceTask
+        let generation = configurationPersistenceGeneration
+        let accountID = configuration.account?.id
+        let task = Task { @MainActor [weak self] in
+            await predecessor?.value
+            guard let self else { return }
+            guard self.isCurrentConfigurationPersistence(generation: generation, accountID: accountID) else {
+                return
+            }
+            do {
+                _ = try await self.runtime.saveConfiguration(self.configuration)
+            } catch {
+                guard self.isCurrentConfigurationPersistence(generation: generation, accountID: accountID) else {
+                    return
+                }
+                onFailure()
+                result.error = error
+                return
+            }
+            guard self.isCurrentConfigurationPersistence(generation: generation, accountID: accountID) else {
+                return
+            }
+        }
+        configurationPersistenceTask = task
+        await task.value
+        if let error = result.error { throw error }
+    }
+
+    /// Account runtime operations are themselves configuration writes. Put them
+    /// behind the same queue so an in-flight write from the former session settles
+    /// before connect, revalidation, or disconnect commits its authoritative state.
+    private func performAccountConfigurationOperation(
+        _ operation: @escaping @MainActor () async throws -> AppConfiguration
+    ) async throws -> AppConfiguration {
+        let result = AccountConfigurationOperationResult()
+        let predecessor = configurationPersistenceTask
+        let task = Task { @MainActor in
+            await predecessor?.value
+            // Let the predecessor settle normally first. In particular, a failed
+            // optimistic save must restore its own field before this account
+            // transition invalidates later queued writes.
+            self.configurationPersistenceGeneration += 1
+            self.activityPersistenceGeneration += 1
+            do {
+                result.configuration = try await operation()
+            } catch {
+                result.error = error
+            }
+        }
+        configurationPersistenceTask = task
+        await task.value
+        if let error = result.error { throw error }
+        guard let configuration = result.configuration else {
+            throw ObservationFailure.unexpected
+        }
+        return configuration
+    }
+
+    private func isCurrentConfigurationPersistence(generation: Int, accountID: AccountID?) -> Bool {
+        configurationPersistenceGeneration == generation && configuration.account?.id == accountID
+    }
+
+    private func restoreFavorite(
+        id: MonitorID,
+        previous: AppConfiguration,
+        expected: AppConfiguration
+    ) {
+        guard let index = configuration.monitors.firstIndex(where: { $0.id == id }),
+              let previousMonitor = previous.monitors.first(where: { $0.id == id }),
+              let expectedMonitor = expected.monitors.first(where: { $0.id == id }),
+              configuration.monitors[index].isPinned == expectedMonitor.isPinned else { return }
+        configuration.monitors[index].isPinned = previousMonitor.isPinned
+        reconcileSnapshotWithCurrentConfiguration()
+    }
+
+    private func restorePreferences(from previous: AppConfiguration, expected: AppConfiguration) {
+        if configuration.refreshIntervalSeconds == expected.refreshIntervalSeconds {
+            configuration.refreshIntervalSeconds = previous.refreshIntervalSeconds
+        }
+        if configuration.notificationsEnabled == expected.notificationsEnabled {
+            configuration.notificationsEnabled = previous.notificationsEnabled
+        }
+        if configuration.notifyOnFailure == expected.notifyOnFailure {
+            configuration.notifyOnFailure = previous.notifyOnFailure
+        }
+        if configuration.notifyOnRecovery == expected.notifyOnRecovery {
+            configuration.notifyOnRecovery = previous.notifyOnRecovery
+        }
+        if configuration.notifyOnApproval == expected.notifyOnApproval {
+            configuration.notifyOnApproval = previous.notifyOnApproval
+        }
+        if configuration.notifyOnFavoriteSuccess == expected.notifyOnFavoriteSuccess {
+            configuration.notifyOnFavoriteSuccess = previous.notifyOnFavoriteSuccess
+        }
+        if configuration.monitorPresentation == expected.monitorPresentation {
+            configuration.monitorPresentation = previous.monitorPresentation
+        }
+        if configuration.historyEnabled == expected.historyEnabled {
+            configuration.historyEnabled = previous.historyEnabled
+        }
+        refreshIntervalSeconds = configuration.refreshIntervalSeconds
+        notificationsEnabled = configuration.notificationsEnabled
+        notifyOnFailure = configuration.notifyOnFailure
+        notifyOnRecovery = configuration.notifyOnRecovery
+        notifyOnApproval = configuration.notifyOnApproval
+        notifyOnFavoriteSuccess = configuration.notifyOnFavoriteSuccess
+        monitorPresentation = configuration.monitorPresentation
+        historyEnabled = configuration.historyEnabled
     }
 
     private func apply(configuration: AppConfiguration) {
@@ -653,9 +803,24 @@ public final class AppModel {
         notifyOnFavoriteSuccess = configuration.notifyOnFavoriteSuccess
         monitorPresentation = configuration.monitorPresentation
         historyEnabled = configuration.historyEnabled
+        reconcileSnapshotWithCurrentConfiguration()
+    }
+
+    /// Polling snapshots carry the configuration used to start their cycle. Keep
+    /// their observations current for presentation purposes while retaining run and
+    /// failure data from that cycle. This makes configuration-only changes visible
+    /// immediately and prevents monitors removed since the snapshot from resurfacing.
+    private func reconcileSnapshotWithCurrentConfiguration() {
+        guard let snapshot else { return }
+        let reconciledSnapshot = reconciled(snapshot)
+        self.snapshot = reconciledSnapshot
+        if let selectedMonitorID, reconciledSnapshot.observations[selectedMonitorID] == nil {
+            self.selectedMonitorID = Self.preferredObservation(in: reconciledSnapshot)?.monitor.id
+        }
     }
 
     private func apply(snapshot: MonitoringSnapshot) {
+        let snapshot = reconciled(snapshot)
         let existingMonitorIDs = Set(configuration.monitors.map(\.id))
         var markerByMonitorID: [MonitorID: MonitorActivityMarker] = [:]
         for marker in configuration.unseenActivity where existingMonitorIDs.contains(marker.monitorID) {
@@ -694,6 +859,31 @@ public final class AppModel {
         stageUnseenActivity(Array(markerByMonitorID.values))
     }
 
+    private func reconciled(_ snapshot: MonitoringSnapshot) -> MonitoringSnapshot {
+        let monitorsByID = Dictionary(uniqueKeysWithValues: configuration.monitors.map { ($0.id, $0) })
+        let observations = snapshot.observations.reduce(into: [MonitorID: MonitorObservation]()) { result, entry in
+            let (monitorID, observation) = entry
+            guard let currentMonitor = monitorsByID[monitorID] else { return }
+            result[monitorID] = MonitorObservation(
+                monitor: currentMonitor,
+                lastKnownRun: observation.lastKnownRun,
+                attemptedAt: observation.attemptedAt,
+                lastSuccessfulObservationAt: observation.lastSuccessfulObservationAt,
+                currentFailure: observation.currentFailure
+            )
+        }
+        return MonitoringSnapshot(
+            cycleID: snapshot.cycleID,
+            startedAt: snapshot.startedAt,
+            completedAt: snapshot.completedAt,
+            reason: snapshot.reason,
+            observations: observations,
+            aggregateState: snapshot.aggregateState,
+            nextRefreshAt: snapshot.nextRefreshAt,
+            isComplete: snapshot.isComplete
+        )
+    }
+
     /// Applies a canonical marker set optimistically, then saves it in an ordered
     /// background chain. On a terminal failure the exact prior configuration is
     /// restored; a newer change is never rolled back by an older request.
@@ -717,16 +907,18 @@ public final class AppModel {
         configuration.unseenActivity = canonical
         activityPersistenceGeneration += 1
         let generation = activityPersistenceGeneration
-        let predecessor = activityPersistenceTask
+        let configurationGeneration = configurationPersistenceGeneration
+        let predecessor = configurationPersistenceTask
         activityPersistenceTask = Task { @MainActor [weak self] in
             await predecessor?.value
             guard let self else { return }
+            guard self.configurationPersistenceGeneration == configurationGeneration,
+                  self.configuration.account?.id == accountID else { return }
             do {
-                let persisted = try await self.runtime.saveUnseenActivity(canonical, for: accountID)
+                _ = try await self.runtime.saveUnseenActivity(canonical, for: accountID)
                 guard self.activityPersistenceGeneration == generation,
                       self.configuration.account?.id == accountID,
                       self.configuration.unseenActivity == canonical else { return }
-                self.apply(configuration: persisted)
             } catch {
                 guard self.activityPersistenceGeneration == generation,
                       self.configuration.account?.id == accountID,
@@ -735,6 +927,7 @@ public final class AppModel {
                 self.errorMessage = Self.message(for: error)
             }
         }
+        configurationPersistenceTask = activityPersistenceTask
     }
 
     /// Account identifiers scope both snapshots and persisted markers. Do not compare
@@ -745,6 +938,9 @@ public final class AppModel {
         activityPersistenceGeneration += 1
         activityPersistenceTask?.cancel()
         activityPersistenceTask = nil
+        configurationPersistenceGeneration += 1
+        configurationPersistenceTask?.cancel()
+        configurationPersistenceTask = nil
     }
 
     private static func preferredObservation(in snapshot: MonitoringSnapshot) -> MonitorObservation? {
