@@ -1380,3 +1380,54 @@ acessível por teclado e VoiceOver; menu bar e Command-Comma preservam o mesmo
 destino; e nenhuma dessas rotas muda a política de monitoramento em segundo
 plano. As evidências de testes, build, revisão independente e QA visual estão
 registradas no planejamento após a integração.
+
+### 21.23 Estado efetivo de pipeline e aprovações manuais
+
+O estado exibido de uma pipeline não pode ser derivado somente de
+`pipeline.state`. O Bitbucket pode manter a pipeline em progresso enquanto ela
+aguarda uma ação manual. A resolução deve combinar, em uma política única, o
+estado e o resultado da pipeline, as etapas na ordem retornada e o tipo de
+gatilho de cada etapa.
+
+A interpretação reconhece somente uma allowlist versionada de valores remotos
+conhecidos para nome, resultado, estágio e tipo de gatilho. Valores fora dessa
+lista, inclusive combinações contraditórias, permanecem `unknown` com os dados
+remotos preservados. A precedência é conservadora:
+
+1. um resultado terminal explícito da pipeline prevalece sobre as etapas e é
+   normalizado como sucesso, falha, erro, parada ou expiração, conforme o
+   contrato conhecido;
+2. qualquer valor de estado ou resultado remoto não reconhecido produz
+   `unknown`, preservando os valores recebidos e sem inferir execução ou
+   sucesso;
+3. para uma pipeline `IN_PROGRESS`, o estágio explícito `PAUSED` produz
+   diretamente `awaitingApproval`;
+4. no estágio `RUNNING`, ou na ausência de estágio, as etapas ordenadas resolvem
+   a fase: uma etapa em execução produz `running`; sem etapa em execução, a
+   primeira etapa ainda ativa que esteja pendente e use gatilho manual produz
+   `awaitingApproval`; uma etapa `READY` automática produz `queued`;
+5. uma etapa com resultado `NOT_RUN` produz `stopped`, sem ser confundida com
+   sucesso, fila ou trabalho em execução; os demais casos em progresso
+   permanecem conservadores, sem converter ausência de informação em estado
+   saudável.
+
+Essa interpretação deve ser aplicada uma única vez no domínio e consumida sem
+adaptações divergentes pela lista, detalhe, filtros, saúde agregada, política de
+polling e notificações. Em particular, uma espera por aprovação não pode entrar
+no filtro de execução, receber a cadência curta de um trabalho realmente ativo
+nem gerar uma transição de notificação incompatível com a fase normalizada.
+O filtro Attention deve incluir `stopped` e `unknown`, além dos resultados de
+falha já atendidos, para que um resultado não saudável ou não interpretável não
+desapareça da superfície de revisão.
+
+Os testes precisam usar fixtures sanitizadas e cobrir resultados terminais,
+valores remotos desconhecidos, os estágios `RUNNING` e `PAUSED`, execução real,
+etapa `READY`, resultado `NOT_RUN`, fila automática e espera manual, inclusive
+quando a pipeline geral ainda estiver em progresso. Nenhuma fixture deve conter
+identificação de conta, repositório, pessoa, commit ou URL real.
+
+Gate consolidado desta decisão: `swift test --quiet` executou 202 testes sem
+falhas, com 1 integração Keychain opt-in omitida; build release, build universal
+para `arm64` e `x86_64`, verificação estrita de assinatura, geração e validação
+do DMG, verificação do sidecar SHA-256 e `git diff --check` foram aprovados. A
+revisão independente não encontrou achados bloqueadores após a correção de P1.

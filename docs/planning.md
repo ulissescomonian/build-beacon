@@ -1941,3 +1941,67 @@ Validações do incremento:
 | `git diff --check` | aprovado na checagem consolidada |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.23 Incremento entregue: resolução auditável de estados Bitbucket
+
+Escopo e ownership:
+
+- contrato API e mapeamento: decodificar nome, resultado e estágio da pipeline,
+  além do estado, resultado e gatilho da etapa, fornecendo-os ordenadamente ao
+  resolvedor;
+- domínio: centralizar a precedência de resultados terminais, estado remoto
+  desconhecido, execução real, fila automática, espera por aprovação manual e
+  parada sem execução;
+- consumidores: usar a fase normalizada existente de modo consistente em
+  filtros, lista, detalhe, saúde agregada, polling e notificações;
+- testes: adicionar fixtures sanitizadas e cenários determinísticos sem dados
+  de contas, repositórios, pessoas, commits ou URLs reais;
+- documentação: registrar a decisão em `discussion.md` e explicar o suporte a
+  aprovações manuais no README, sem antecipar contagem de testes ou resultado de
+  gates.
+
+Contrato estabilizado:
+
+- resultados terminais explícitos têm precedência sobre o estado das etapas;
+- valor remoto não reconhecido permanece `unknown` e nunca é apresentado como
+  sucesso ou execução por inferência;
+- nomes, resultados, estágios e tipos de gatilho são reconhecidos somente por
+  allowlist explícita; combinação não reconhecida ou contraditória permanece
+  `unknown`;
+- em uma pipeline `IN_PROGRESS`, o estágio explícito `PAUSED` produz
+  `awaitingApproval` diretamente;
+- no estágio `RUNNING`, ou sem estágio explícito, a resolução ordenada das
+  etapas dá precedência a uma etapa em execução; sem execução, a primeira etapa
+  pendente com gatilho manual produz `awaitingApproval` e uma etapa `READY`
+  automática produz `queued`;
+- uma etapa com resultado `NOT_RUN` produz `stopped`;
+- `awaitingApproval` usa a política de polling e a semântica de notificação da
+  aprovação, não as de uma execução ativa.
+
+Critérios de aceite verificados:
+
+- a lista, o detalhe e os filtros apresentam a mesma fase para um mesmo
+  snapshot;
+- uma aprovação manual não aparece como `Running`;
+- resultados terminais e desconhecidos preservam a precedência conservadora;
+- `PAUSED`, `READY` e `NOT_RUN` são normalizados nas fases corretas;
+- o filtro Attention inclui `stopped` e `unknown`, sem mudar indevidamente o
+  escopo de filtros de execução ou aprovação;
+- o scheduler usa a cadência correta para cada fase normalizada;
+- notificações usam transições da fase resolvida, sem alerta duplicado ou
+  classificação incompatível;
+- en e pt-BR permanecem completos para toda nova string visível, se houver.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| `swift test --quiet` | 202 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| build universal | `arm64` e `x86_64` aprovados |
+| `codesign --verify --deep --strict` | aprovado |
+| DMG e sidecar SHA-256 | DMG 1.0.0 gerado, validado com `hdiutil` e sidecar verificado |
+| revisão independente | sem achados bloqueadores após a correção de P1 |
+| `git diff --check` | aprovado |
+
+Estado: entregue e aprovado para empacotamento Preview.

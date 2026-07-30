@@ -57,7 +57,7 @@ enum BitbucketMapper {
         return PipelineRun(
             id: PipelineRunID(rawValue: uuid),
             buildNumber: buildNumber,
-            phase: pipelinePhase(dto.state),
+            phase: resolvedPipelinePhase(dto.state, steps: steps),
             branchName: nonempty(dto.target?.refName),
             commitHash: nonempty(dto.target?.commit?.hash),
             startedAt: dto.createdOn,
@@ -95,7 +95,7 @@ enum BitbucketMapper {
         return PipelineStep(
             id: PipelineStepID(rawValue: uuid),
             name: nonempty(dto.name) ?? "Unnamed step",
-            phase: stepPhase(dto.state),
+            phase: stepPhase(dto.state, trigger: dto.trigger),
             startedAt: dto.startedOn,
             completedAt: dto.completedOn
         )
@@ -103,16 +103,153 @@ enum BitbucketMapper {
 
     static func pipelinePhase(_ state: BitbucketStateDTO?) -> PipelinePhase {
         PipelineStateReducer.reduce(
-            remoteState: nonempty(state?.name ?? state?.type),
-            remoteResult: nonempty(state?.result?.name ?? state?.result?.type)
+            remoteState: pipelineState(state),
+            remoteResult: pipelineResult(state?.result)
         )
     }
 
-    static func stepPhase(_ state: BitbucketStateDTO?) -> PipelineStepPhase {
+    private static func resolvedPipelinePhase(
+        _ state: BitbucketStateDTO?,
+        steps: [PipelineStep]
+    ) -> PipelinePhase {
+        let basePhase = pipelinePhase(state)
+        guard basePhase == .running else { return basePhase }
+
+        guard let stage = pipelineStage(state?.stage) else {
+            return PipelineStateReducer.resolve(
+                pipelinePhase: basePhase,
+                stepPhases: steps.map(\.phase)
+            )
+        }
+
+        switch stage.uppercased() {
+        case "PAUSED":
+            return .awaitingApproval
+        case "RUNNING":
+            return PipelineStateReducer.resolve(
+                pipelinePhase: basePhase,
+                stepPhases: steps.map(\.phase)
+            )
+        default:
+            return .unknown(
+                remoteState: stage,
+                remoteResult: pipelineResult(state?.result)
+            )
+        }
+    }
+
+    static func stepPhase(
+        _ state: BitbucketStateDTO?,
+        trigger: BitbucketPipelineStepTriggerDTO? = nil
+    ) -> PipelineStepPhase {
         PipelineStateReducer.reduceStep(
-            remoteState: nonempty(state?.name ?? state?.type),
-            remoteResult: nonempty(state?.result?.name ?? state?.result?.type)
+            remoteState: stepState(state),
+            remoteResult: stepResult(state?.result),
+            requiresManualTrigger: requiresManualTrigger(trigger)
         )
+    }
+
+    private static func pipelineState(_ state: BitbucketStateDTO?) -> String? {
+        canonicalValue(
+            name: state?.name,
+            type: state?.type,
+            allowlist: [
+                "pending": "PENDING",
+                "in_progress": "IN_PROGRESS",
+                "completed": "COMPLETED",
+                "pipeline_state_pending": "PENDING",
+                "pipeline_state_in_progress": "IN_PROGRESS",
+                "pipeline_state_completed": "COMPLETED",
+            ]
+        )
+    }
+
+    private static func pipelineStage(_ stage: BitbucketPipelineStageDTO?) -> String? {
+        canonicalValue(
+            name: stage?.name,
+            type: stage?.type,
+            allowlist: [
+                "running": "RUNNING",
+                "paused": "PAUSED",
+                "pipeline_state_in_progress_running": "RUNNING",
+                "pipeline_state_in_progress_paused": "PAUSED",
+            ]
+        )
+    }
+
+    private static func pipelineResult(_ result: BitbucketResultDTO?) -> String? {
+        canonicalValue(
+            name: result?.name,
+            type: result?.type,
+            allowlist: [
+                "error": "ERROR",
+                "failed": "FAILED",
+                "stopped": "STOPPED",
+                "expired": "EXPIRED",
+                "successful": "SUCCESSFUL",
+                "pipeline_state_completed_error": "ERROR",
+                "pipeline_state_completed_failed": "FAILED",
+                "pipeline_state_completed_stopped": "STOPPED",
+                "pipeline_state_completed_expired": "EXPIRED",
+                "pipeline_state_completed_successful": "SUCCESSFUL",
+            ]
+        )
+    }
+
+    private static func stepState(_ state: BitbucketStateDTO?) -> String? {
+        canonicalValue(
+            name: state?.name,
+            type: state?.type,
+            allowlist: [
+                "pending": "PENDING",
+                "ready": "PENDING",
+                "in_progress": "IN_PROGRESS",
+                "completed": "COMPLETED",
+                "pipeline_step_state_pending": "PENDING",
+                "pipeline_step_state_ready": "PENDING",
+                "pipeline_step_state_in_progress": "IN_PROGRESS",
+                "pipeline_step_state_completed": "COMPLETED",
+            ]
+        )
+    }
+
+    private static func stepResult(_ result: BitbucketResultDTO?) -> String? {
+        canonicalValue(
+            name: result?.name,
+            type: result?.type,
+            allowlist: [
+                "error": "ERROR",
+                "failed": "FAILED",
+                "stopped": "STOPPED",
+                "not_run": "NOT_RUN",
+                "expired": "EXPIRED",
+                "successful": "SUCCESSFUL",
+                "pipeline_step_state_completed_error": "ERROR",
+                "pipeline_step_state_completed_failed": "FAILED",
+                "pipeline_step_state_completed_stopped": "STOPPED",
+                "pipeline_step_state_completed_not_run": "NOT_RUN",
+                "pipeline_step_state_completed_expired": "EXPIRED",
+                "pipeline_step_state_completed_successful": "SUCCESSFUL",
+            ]
+        )
+    }
+
+    private static func canonicalValue(
+        name: String?,
+        type: String?,
+        allowlist: [String: String]
+    ) -> String? {
+        guard let value = firstNonempty(name, type) else { return nil }
+        return allowlist[value.lowercased()] ?? value
+    }
+
+    private static func firstNonempty(_ values: String?...) -> String? {
+        values.lazy.compactMap(nonempty).first
+    }
+
+    private static func requiresManualTrigger(_ trigger: BitbucketPipelineStepTriggerDTO?) -> Bool {
+        guard let type = nonempty(trigger?.type) else { return false }
+        return type.lowercased() == "pipeline_step_trigger_manual"
     }
 
     private static func nonempty(_ value: String?) -> String? {

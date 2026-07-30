@@ -19,11 +19,22 @@ public struct DashboardView: View {
             return switch filter {
             case .all: true
             case .recent: model.isActivityUnseen(observation)
-            case .attention: observation.currentFailure != nil || phase == .failed || phase == .errored || phase == .expired
+            case .attention:
+                observation.currentFailure != nil
+                    || phase == .failed
+                    || phase == .errored
+                    || phase == .expired
+                    || phase == .stopped
+                    || isUnknown(phase)
             case .running: phase == .running || phase == .queued
             case .approval: phase == .awaitingApproval
             }
         }
+    }
+
+    private func isUnknown(_ phase: PipelinePhase?) -> Bool {
+        if case .unknown? = phase { return true }
+        return false
     }
 
     private var activePresentationPreferences: MonitorPresentationPreferences {

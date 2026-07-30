@@ -433,7 +433,7 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
 
         for (remoteState, remoteResult, expectedPipeline, expectedStep) in cases {
             let result = remoteResult.map { BitbucketResultDTO(name: $0, type: nil) }
-            let state = BitbucketStateDTO(name: remoteState, type: nil, result: result)
+            let state = BitbucketStateDTO(name: remoteState, type: nil, result: result, stage: nil)
             XCTAssertEqual(BitbucketMapper.pipelinePhase(state), expectedPipeline)
             XCTAssertEqual(BitbucketMapper.stepPhase(state), expectedStep)
             XCTAssertEqual(
@@ -444,6 +444,139 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
                 BitbucketMapper.stepPhase(state),
                 PipelineStateReducer.reduceStep(remoteState: remoteState, remoteResult: remoteResult)
             )
+        }
+    }
+
+    func testLatestPipelineResolvesManualStepTriggerAndActiveStepPrecedence() async throws {
+        let accountID = AccountID(rawValue: "account")
+        let store = InMemoryCredentialStore(credential: .init(email: "a@b.com", token: "token"), accountID: accountID)
+        let pipeline = #"{"values":[{"uuid":"p","build_number":1,"state":{"name":"IN_PROGRESS"}}]}"#
+        let transport = SequencedTransport(responses: [
+            .json(pipeline),
+            .json(#"{"values":[{"uuid":"completed","name":"Build","state":{"name":"COMPLETED","result":{"name":"SUCCESSFUL"}}},{"uuid":"manual","name":"Deploy","state":{"name":"PENDING"},"trigger":{"type":"  PIPELINE_STEP_TRIGGER_MANUAL  "}}]}"#),
+        ])
+        let client = makeClient(store: store, transport: transport)
+
+        let fetchedPipeline = try await client.latestPipeline(for: monitor(accountID: accountID))
+
+        XCTAssertEqual(fetchedPipeline?.phase, .awaitingApproval)
+        XCTAssertEqual(fetchedPipeline?.steps.map(\.phase), [.succeeded, .awaitingApproval])
+    }
+
+    func testLatestPipelineKeepsRunningWhenManualStepAndRunningStepCoexist() async throws {
+        let accountID = AccountID(rawValue: "account")
+        let store = InMemoryCredentialStore(credential: .init(email: "a@b.com", token: "token"), accountID: accountID)
+        let transport = SequencedTransport(responses: [
+            .json(#"{"values":[{"uuid":"p","build_number":1,"state":{"name":"IN_PROGRESS"}}]}"#),
+            .json(#"{"values":[{"uuid":"running","name":"Tests","state":{"name":"IN_PROGRESS"}},{"uuid":"manual","name":"Deploy","state":{"name":"PENDING"},"trigger":{"type":"pipeline_step_trigger_manual"}}]}"#),
+        ])
+        let client = makeClient(store: store, transport: transport)
+
+        let fetchedPipeline = try await client.latestPipeline(for: monitor(accountID: accountID))
+
+        XCTAssertEqual(fetchedPipeline?.phase, .running)
+    }
+
+    func testLatestPipelineDoesNotTreatAutomaticOrUnknownTriggerAsApproval() async throws {
+        for trigger in ["pipeline_step_trigger_automatic", "pipeline_step_trigger_future"] {
+            let accountID = AccountID(rawValue: "account-\(trigger)")
+            let store = InMemoryCredentialStore(credential: .init(email: "a@b.com", token: "token"), accountID: accountID)
+            let transport = SequencedTransport(responses: [
+                .json(#"{"values":[{"uuid":"p","build_number":1,"state":{"name":"IN_PROGRESS"}}]}"#),
+                .json("{\"values\":[{\"uuid\":\"pending\",\"name\":\"Next\",\"state\":{\"name\":\"PENDING\"},\"trigger\":{\"type\":\"\(trigger)\"}}]}"),
+            ])
+            let client = makeClient(store: store, transport: transport)
+
+            let fetchedPipeline = try await client.latestPipeline(for: monitor(accountID: accountID))
+
+            XCTAssertEqual(fetchedPipeline?.phase, .running, "trigger: \(trigger)")
+            XCTAssertEqual(fetchedPipeline?.steps.first?.phase, .queued, "trigger: \(trigger)")
+        }
+    }
+
+    func testLatestPipelineResolvesInProgressStageWithSteps() async throws {
+        let cases: [(stage: String, steps: String, expected: PipelinePhase)] = [
+            (
+                " PAUSED ",
+                #"{"values":[{"uuid":"manual","name":"Deploy","state":{"name":"PENDING"},"trigger":{"type":"pipeline_step_trigger_manual"}}]}"#,
+                .awaitingApproval
+            ),
+            (
+                "RUNNING",
+                #"{"values":[{"uuid":"manual","name":"Deploy","state":{"name":"PENDING"},"trigger":{"type":"pipeline_step_trigger_manual"}}]}"#,
+                .awaitingApproval
+            ),
+            (
+                "RUNNING",
+                #"{"values":[{"uuid":"running","name":"Tests","state":{"name":"IN_PROGRESS"}}]}"#,
+                .running
+            ),
+            (
+                "WAITING_FOR_TELEPORT",
+                #"{"values":[{"uuid":"manual","name":"Deploy","state":{"name":"PENDING"},"trigger":{"type":"pipeline_step_trigger_manual"}}]}"#,
+                .unknown(remoteState: "WAITING_FOR_TELEPORT", remoteResult: nil)
+            ),
+        ]
+
+        for testCase in cases {
+            let accountID = AccountID(rawValue: "account-stage-\(testCase.stage)")
+            let store = InMemoryCredentialStore(credential: .init(email: "a@b.com", token: "token"), accountID: accountID)
+            let transport = SequencedTransport(responses: [
+                .json("{\"values\":[{\"uuid\":\"p\",\"build_number\":1,\"state\":{\"name\":\"IN_PROGRESS\",\"stage\":{\"name\":\"\(testCase.stage)\"}}}]}"),
+                .json(testCase.steps),
+            ])
+            let client = makeClient(store: store, transport: transport)
+
+            let fetchedPipeline = try await client.latestPipeline(for: monitor(accountID: accountID))
+
+            XCTAssertEqual(fetchedPipeline?.phase, testCase.expected, "stage: \(testCase.stage)")
+        }
+    }
+
+    func testLatestPipelineMapsOfficialTypeOnlyDiscriminators() async throws {
+        let cases: [(pipeline: String, steps: String, phase: PipelinePhase, stepPhase: PipelineStepPhase?)] = [
+            (
+                #"{"values":[{"uuid":"p","build_number":1,"state":{"type":"pipeline_state_in_progress","stage":{"type":"pipeline_state_in_progress_paused"}}}]}"#,
+                #"{"values":[{"uuid":"ready","name":"Deploy","state":{"type":"pipeline_step_state_ready"}}]}"#,
+                .awaitingApproval,
+                .queued
+            ),
+            (
+                #"{"values":[{"uuid":"p","build_number":1,"state":{"type":"pipeline_state_in_progress","stage":{"type":"pipeline_state_in_progress_running"}}}]}"#,
+                #"{"values":[{"uuid":"running","name":"Tests","state":{"type":"pipeline_step_state_in_progress"}}]}"#,
+                .running,
+                .running
+            ),
+            (
+                #"{"values":[{"uuid":"p","build_number":1,"state":{"type":"pipeline_state_completed","result":{"type":"pipeline_state_completed_successful"}}}]}"#,
+                #"{"values":[{"uuid":"complete","name":"Tests","state":{"type":"pipeline_step_state_completed","result":{"type":"pipeline_step_state_completed_successful"}}}]}"#,
+                .succeeded,
+                .succeeded
+            ),
+            (
+                #"{"values":[{"uuid":"p","build_number":1,"state":{"type":"pipeline_state_completed","result":{"type":"pipeline_state_completed_failed"}}}]}"#,
+                #"{"values":[{"uuid":"skipped","name":"Deploy","state":{"type":"pipeline_step_state_completed","result":{"type":"pipeline_step_state_completed_not_run"}}}]}"#,
+                .failed,
+                .stopped
+            ),
+            (
+                #"{"values":[{"uuid":"p","build_number":1,"state":{"type":"pipeline_state_future"}}]}"#,
+                #"{"values":[]}"#,
+                .unknown(remoteState: "pipeline_state_future", remoteResult: nil),
+                nil
+            ),
+        ]
+
+        for (index, testCase) in cases.enumerated() {
+            let accountID = AccountID(rawValue: "account-type-\(index)")
+            let store = InMemoryCredentialStore(credential: .init(email: "a@b.com", token: "token"), accountID: accountID)
+            let transport = SequencedTransport(responses: [.json(testCase.pipeline), .json(testCase.steps)])
+            let client = makeClient(store: store, transport: transport)
+
+            let fetchedPipeline = try await client.latestPipeline(for: monitor(accountID: accountID))
+
+            XCTAssertEqual(fetchedPipeline?.phase, testCase.phase)
+            XCTAssertEqual(fetchedPipeline?.steps.first?.phase, testCase.stepPhase)
         }
     }
 

@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Universal-arm64%20%2B%20x86__64-6E56CF?style=flat-square" alt="Universal arm64 and x86 64" />
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?style=flat-square" alt="Swift 6.2" />
   <img src="https://img.shields.io/badge/UI-native%20SwiftUI-147EFB?style=flat-square" alt="Native SwiftUI" />
-  <img src="https://img.shields.io/badge/tests-192-34A853?style=flat-square" alt="192 tests" />
+  <img src="https://img.shields.io/badge/tests-202-34A853?style=flat-square" alt="202 tests" />
   <img src="https://img.shields.io/badge/status-Preview-D97706?style=flat-square" alt="Preview status" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-586069?style=flat-square" alt="MIT License" /></a>
 </p>
@@ -56,6 +56,12 @@ Build Beacon keeps the most useful Bitbucket Pipeline signal where it belongs: i
 | Data is stale / unavailable | A recent result cannot be refreshed confidently; the app preserves the last known result where appropriate. |
 | Unknown / stopped | A non-success result that remains visible for review; it is never presented as healthy. |
 | No monitors / connect account | Setup is incomplete, not a pipeline failure. |
+
+Build Beacon recognizes a manual approval gate separately from active work. It
+shows **Awaiting approval** when Bitbucket reports a paused manual gate, or when
+the first active step of an in-progress pipeline requires a manual trigger.
+This keeps active execution, automatic queueing, and a human decision visibly
+distinct.
 
 ### Recent activity and unseen work
 
@@ -224,7 +230,7 @@ Packaging creates a local artifact; it does not publish a release, notarize the 
 
 ## Testing
 
-The current suite contains **192 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
+The current suite contains **202 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
 
 ```bash
 swift test

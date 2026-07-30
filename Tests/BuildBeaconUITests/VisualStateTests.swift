@@ -33,6 +33,23 @@ final class VisualStateTests: XCTestCase {
         XCTAssertEqual(state.tint, .secondary)
     }
 
+    func testAwaitingApprovalPipelineRunHasDistinctVisualState() {
+        let run = PipelineRun(
+            id: PipelineRunID(rawValue: "run"),
+            buildNumber: 1,
+            phase: .awaitingApproval
+        )
+
+        let state = observation(lastKnownRun: run).visualState(
+            refreshIntervalSeconds: 60,
+            now: now
+        )
+
+        XCTAssertEqual(state.symbolName, "pause.circle.fill")
+        XCTAssertEqual(state.title, "Awaiting approval")
+        XCTAssertEqual(state.tint, .blue)
+    }
+
     func testFailureWithoutRunContinuesToShowFailure() {
         let state = observation(lastKnownRun: nil, currentFailure: .offline).visualState(
             refreshIntervalSeconds: 60,
