@@ -41,6 +41,23 @@ final class SnapshotAndNotificationTests: XCTestCase {
         XCTAssertEqual(events(from: recovered, to: approval).map(\.kind), [.awaitingApproval])
     }
 
+    func testApprovalNotificationsRespectPreferenceAndDeduplicateSameRun() {
+        let running = observation("a", phase: .running, runID: "1")
+        let approval = observation("a", phase: .awaitingApproval, runID: "1")
+
+        XCTAssertTrue(NotificationPolicy.events(
+            previous: snapshot([running], aggregate: .running),
+            current: snapshot([approval], aggregate: .awaitingApproval),
+            configuration: configuration(notifyOnApproval: false)
+        ).isEmpty)
+
+        XCTAssertTrue(NotificationPolicy.events(
+            previous: snapshot([approval], aggregate: .awaitingApproval),
+            current: snapshot([approval], aggregate: .awaitingApproval),
+            configuration: configuration()
+        ).isEmpty)
+    }
+
     func testUnknownIsNeverRecovery() {
         let failed = observation("a", phase: .failed, runID: "1")
         let unknown = observation("a", phase: .unknown(remoteState: "x", remoteResult: nil), runID: "1")
@@ -163,11 +180,13 @@ final class SnapshotAndNotificationTests: XCTestCase {
 
     private func configuration(
         notifyOnRecovery: Bool = true,
+        notifyOnApproval: Bool = true,
         notifyOnFavoriteSuccess: Bool = false
     ) -> AppConfiguration {
         AppConfiguration(
             account: AccountProfile(id: AccountID(rawValue: "account"), displayName: "A", email: "a@example.com"),
             notifyOnRecovery: notifyOnRecovery,
+            notifyOnApproval: notifyOnApproval,
             notifyOnFavoriteSuccess: notifyOnFavoriteSuccess
         )
     }

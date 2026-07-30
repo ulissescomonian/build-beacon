@@ -18,9 +18,58 @@ final class DomainRulesTests: XCTestCase {
         XCTAssertEqual(PipelineStateReducer.reduce(remoteState: nil, remoteResult: "FAILED"), .failed)
         XCTAssertEqual(PipelineStateReducer.reduce(remoteState: nil, remoteResult: "ERROR"), .errored)
         XCTAssertEqual(PipelineStateReducer.reduce(remoteState: nil, remoteResult: "EXPIRED"), .expired)
+        XCTAssertEqual(PipelineStateReducer.reduce(remoteState: nil, remoteResult: "NOT_RUN"), .stopped)
+        XCTAssertEqual(PipelineStateReducer.reduce(remoteState: "READY", remoteResult: nil), .queued)
         XCTAssertEqual(PipelineStateReducer.reduce(remoteState: "IN_PROGRESS", remoteResult: nil), .running)
         XCTAssertEqual(PipelineStateReducer.reduce(remoteState: "PAUSED", remoteResult: nil), .awaitingApproval)
         XCTAssertEqual(PipelineStateReducer.reduce(remoteState: "HALTED", remoteResult: nil), .awaitingApproval)
+    }
+
+    func testStepReductionOnlyPromotesQueuedManualTriggersToApproval() {
+        let cases: [(String?, String?, Bool, PipelineStepPhase)] = [
+            ("PENDING", nil, false, .queued),
+            ("PENDING", nil, true, .awaitingApproval),
+            ("READY", nil, false, .queued),
+            ("IN_PROGRESS", nil, true, .running),
+            ("COMPLETED", "SUCCESSFUL", true, .succeeded),
+            ("COMPLETED", "FAILED", true, .failed),
+            ("COMPLETED", "NOT_RUN", true, .stopped),
+            ("MYSTERY", nil, true, .unknown),
+        ]
+
+        for (remoteState, remoteResult, requiresManualTrigger, expected) in cases {
+            XCTAssertEqual(
+                PipelineStateReducer.reduceStep(
+                    remoteState: remoteState,
+                    remoteResult: remoteResult,
+                    requiresManualTrigger: requiresManualTrigger
+                ),
+                expected,
+                "Unexpected phase for state=\(remoteState ?? "nil"), result=\(remoteResult ?? "nil")"
+            )
+        }
+    }
+
+    func testPipelineResolutionHonorsRunningStepAndFirstActiveStepBoundary() {
+        let cases: [(PipelinePhase, [PipelineStepPhase], PipelinePhase)] = [
+            (.running, [.awaitingApproval], .awaitingApproval),
+            (.running, [.succeeded, .awaitingApproval, .queued], .awaitingApproval),
+            (.running, [.succeeded, .queued, .awaitingApproval], .running),
+            (.running, [.awaitingApproval, .running], .running),
+            (.running, [.unknown, .failed, .stopped], .running),
+            (.queued, [.awaitingApproval], .queued),
+            (.awaitingApproval, [.running], .awaitingApproval),
+            (.succeeded, [.running], .succeeded),
+            (.unknown(remoteState: "MYSTERY", remoteResult: nil), [.awaitingApproval], .unknown(remoteState: "MYSTERY", remoteResult: nil)),
+        ]
+
+        for (pipelinePhase, stepPhases, expected) in cases {
+            XCTAssertEqual(
+                PipelineStateReducer.resolve(pipelinePhase: pipelinePhase, stepPhases: stepPhases),
+                expected,
+                "Unexpected resolution for pipeline=\(pipelinePhase), steps=\(stepPhases)"
+            )
+        }
     }
 
     func testFreshnessThresholdHasFloorAndCeiling() {

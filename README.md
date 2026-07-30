@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Universal-arm64%20%2B%20x86__64-6E56CF?style=flat-square" alt="Universal arm64 and x86 64" />
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?style=flat-square" alt="Swift 6.2" />
   <img src="https://img.shields.io/badge/UI-native%20SwiftUI-147EFB?style=flat-square" alt="Native SwiftUI" />
-  <img src="https://img.shields.io/badge/tests-170-34A853?style=flat-square" alt="170 tests" />
+  <img src="https://img.shields.io/badge/tests-202-34A853?style=flat-square" alt="202 tests" />
   <img src="https://img.shields.io/badge/status-Preview-D97706?style=flat-square" alt="Preview status" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-586069?style=flat-square" alt="MIT License" /></a>
 </p>
@@ -34,7 +34,7 @@ Build Beacon keeps the most useful Bitbucket Pipeline signal where it belongs: i
 ## Why Build Beacon
 
 - **Native by design.** Built with Swift 6.2, SwiftUI, AppKit-adjacent system APIs, and a real macOS menu bar experience.
-- **One focused workspace.** The Dashboard is a single native window: opening it again restores and focuses the existing workspace instead of creating duplicates. Its app icon appears in the Dock while that workspace is open or minimized, then returns to a menu-bar-only presence when the window closes.
+- **One focused workspace.** The Dashboard is a single native window: opening it again restores and focuses the existing workspace instead of creating duplicates. If you keep its Dock icon, clicking it also opens that workspace when it is closed. The app returns to a menu-bar-only presence when the window closes; a tile manually kept in the Dock remains available as a launcher.
 - **Quiet, legible status.** A single visual state summarizes your monitored pipelines; detail remains one click away.
 - **Always-on awareness.** Monitoring responds to app activation, wake, and genuine network recovery without creating duplicate refresh work.
 - **Adaptive, per-monitor polling.** Active runs receive faster checks, approval waits reduce unnecessary pressure, and transient failures back off independently.
@@ -56,6 +56,12 @@ Build Beacon keeps the most useful Bitbucket Pipeline signal where it belongs: i
 | Data is stale / unavailable | A recent result cannot be refreshed confidently; the app preserves the last known result where appropriate. |
 | Unknown / stopped | A non-success result that remains visible for review; it is never presented as healthy. |
 | No monitors / connect account | Setup is incomplete, not a pipeline failure. |
+
+Build Beacon recognizes a manual approval gate separately from active work. It
+shows **Awaiting approval** when Bitbucket reports a paused manual gate, or when
+the first active step of an in-progress pipeline requires a manual trigger.
+This keeps active execution, automatic queueing, and a human decision visibly
+distinct.
 
 ### Recent activity and unseen work
 
@@ -186,8 +192,9 @@ For Preview builds, macOS may show a provenance or signature warning. Do not dis
 After connection, Build Beacon lives in the menu bar.
 
 - Click the icon to see the overall health of your monitors and the most relevant recent state.
-- Choose **Open Dashboard** for a larger view of monitored pipelines, steps, retained run history, and any available commit or pull-request context. Repeated requests focus the same dashboard window; if it is minimized, it is restored. The Dock icon remains available while that workspace is open or minimized, and disappears when you close it.
+- Choose **Open Dashboard** for a larger view of monitored pipelines, steps, retained run history, and any available commit or pull-request context. Repeated requests focus the same dashboard window; if it is minimized, it is restored. If you keep the app in the Dock, clicking it follows that same open-or-focus behavior even when the dashboard is closed. The transient Dock icon disappears when you close the workspace; a tile you manually keep remains as a launcher.
 - The Dashboard opens in recent-activity order. Use its sidebar and view options to filter by state, **Recent**, or project; search repositories; group or sort monitors; and bring favorites to the top. Rows show relative activity time, while the blue **NEW** marker identifies activity you have not acknowledged yet.
+- Use the Settings button in the Dashboard toolbar, **Settings** in the menu bar, or Command-Comma to open the same native Settings window.
 - Use **Settings → Monitoring** to filter by project and search repositories before adding them. Choose **Select All Visible** to add a filtered set at once, choose one shared target (**Latest run** or **Default branch**), and confirm it as one atomic operation. Repositories already monitored cannot be selected again. The Advanced section remains available for a specific branch.
 - Use **Settings → Refresh** to choose the normal interval: 30 seconds, 1 minute, 2 minutes, 5 minutes, or 15 minutes. Running or queued monitors use an interval no longer than 30 seconds; approval waits use an interval of at least 120 seconds; individual transient failures back off from 30 to 900 seconds.
 - Use **Settings → Refresh** to manage failure, recovery, and approval alerts, inspect macOS notification permission, and send a test notification before relying on alerts. Success notifications are opt-in, remain off by default, and notify only for favorite monitors.
@@ -223,13 +230,13 @@ Packaging creates a local artifact; it does not publish a release, notarize the 
 
 ## Testing
 
-The current suite contains **170 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
+The current suite contains **202 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
 
 ```bash
 swift test
 ```
 
-The tests cover API mapping and transport behavior, lifecycle and adaptive polling policy, domain-state aggregation and notification policy, account and monitoring orchestration, permission and notification routing, bounded local history and configuration migration (including schema v3 unseen-activity markers), Keychain behavior, dashboard organization and recent/unseen acknowledgement semantics, and the UI model's onboarding and error presentation.
+The tests cover API mapping and transport behavior, lifecycle and adaptive polling policy, domain-state aggregation and notification policy, account and monitoring orchestration, permission and notification routing, bounded local history and configuration migration (including schema v3 unseen-activity markers), Keychain behavior, dashboard organization and recent/unseen acknowledgement semantics, reliable optimistic favorites with serial persistence and rollback, and the UI model's onboarding and error presentation.
 
 ## Repository layout
 

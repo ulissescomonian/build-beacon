@@ -1253,3 +1253,181 @@ remove o Dock sem desligar o monitoramento; e os dois ícones preservam suas
 funções visuais separadas. O gate consolidado executou 170 testes sem falhas,
 com 1 integração Keychain opt-in omitida; build release, bundle universal,
 ícone nativo, assinatura, diff e revisão independente foram aprovados.
+
+### 21.19 Linhas de repositório clicáveis e favoritismo responsivo
+
+A linha de repositório é uma única área de seleção: todo o espaço textual e
+vazio visível da célula deve selecionar o monitor, inclusive nome, metadados e
+regiões de preenchimento. Controles internos preservam ações exclusivas; em
+particular, a estrela alterna somente o favorito e não pode ser interpretada
+como seleção da linha. A implementação deve evitar que views de texto, ícones
+decorativos ou overlays transparentes absorvam o gesto que pertence à linha.
+
+Favoritar responde imediatamente ao gesto com estado otimista e feedback visual
+local. A persistência acontece de modo assíncrono e não pode atrasar o clique,
+o desenho da interface ou a seleção. Caso a gravação falhe, a interface reverte
+o favorito ao estado previamente confirmado e apresenta o tratamento de erro
+existente, sem deixar um favorito aparente que não sobreviveria ao relançamento.
+Snapshots de monitoramento e a atualização de favoritos são fluxos distintos:
+um snapshot recebido não deve reintroduzir latência na interação nem sobrescrever
+uma intenção local mais recente.
+
+O favorito continua a ter prioridade de ordenação. Quando essa prioridade muda
+a posição da linha, a reordenação é animada de forma explícita para preservar a
+continuidade espacial; com Reduce Motion ativo, a atualização permanece correta
+e acessível, mas sem movimento desnecessário. A seleção é identificada pelo
+monitor, e não por índice, portanto permanece no mesmo repositório mesmo que a
+linha se mova, seja atualizada por snapshot ou seja reordenada por favoritismo.
+
+Critérios desta decisão: clicar em qualquer área não interativa da célula
+seleciona o mesmo monitor; a estrela responde sem aguardar I/O e não seleciona a
+linha; falha de persistência reverte o estado otimista; a reordenação tem
+transição perceptível quando movimento é permitido; e seleção, acessibilidade e
+ordem permanecem consistentes através de refreshes concorrentes.
+
+O gate consolidado executou 181 testes sem falhas, com 1 integração Keychain
+opt-in omitida. Testes adversariais cobrem gravações sobrepostas, rollback,
+atividade nova durante persistência, barreiras de troca de conta e descarte de
+operações obsoletas. Build release, verificação de diff e revisão independente
+foram aprovados sem achados altos ou médios remanescentes.
+
+### 21.20 Favoritos lineares e intenção mais recente
+
+A primeira implementação otimista ainda descartava cliques válidos enquanto o
+indicador global `isMutatingMonitors` estivesse ativo. Isso fazia a estrela
+parecer intermitente: uma ação em voo bloqueava tanto favoritar quanto remover
+um favorito, mesmo quando a nova intenção do usuário era inequívoca.
+
+Cada clique válido agora atualiza imediatamente o estado apresentado e registra
+a intenção desejada por `MonitorID`. As gravações são persistidas em série para
+esse monitor, sem bloquear interações com os demais. Uma falha de uma gravação
+antiga não pode vencer uma intenção posterior: somente se a última intenção
+pendente falhar a UI retorna ao valor confirmado. Adições e remoções estruturais
+de monitores continuam bloqueadas enquanto houver favoritos pendentes, para não
+misturar a mutação de coleção com a persistência de preferência; durante uma
+mutação estrutural, a estrela fica explicitamente desabilitada. Gravações
+pendentes de favoritos, por si só, nunca desabilitam a estrela.
+
+A animação de reorder permanece exclusivamente ligada a uma mudança real de
+posição causada pelo favorito e é suprimida com Reduce Motion. Ela não é usada
+como sinal de conclusão de I/O nem dispara para um clique que não altere a
+ordem. Assim, a resposta da estrela é imediata e confiável, enquanto a
+continuidade espacial só aparece quando há movimento efetivo na lista.
+
+Critérios desta decisão: toda alternância válida é aceita durante persistência
+anterior; o último valor desejado por monitor prevalece sobre falhas antigas; a
+última falha retorna ao valor confirmado; operações estruturais aguardam a fila
+de favoritos e desabilitam explicitamente a estrela enquanto durarem; e
+animação e acessibilidade preservam as regras da decisão 21.19.
+
+Os testes focados executaram 54 cenários sem falhas. A suíte completa executou
+188 testes sem falhas, com 1 integração Keychain opt-in omitida. Build release e
+verificação de diff foram aprovados. A revisão independente não deixou achados
+altos ou médios após tornar explícita a indisponibilidade da estrela durante
+mutações estruturais.
+
+### 21.21 Reordenação animada na transação do clique
+
+A animação implícita anteriormente observava a lista já reordenada, enquanto a
+mutação otimista acontecia dentro de uma tarefa assíncrona. Essa separação fazia
+a mesma mudança visual ocorrer algumas vezes dentro e outras fora da transação
+de animação, embora o estado final do favorito estivesse correto.
+
+O clique agora inicia sincronamente a mutação otimista e a reordenação dentro de
+uma transação explícita de animação. Somente depois disso a persistência segue em
+uma tarefa retornada pelo modelo. A lista não mantém mais uma animação implícita
+por identidade, evitando que polling, rollback ou outras atualizações animem por
+acidente. Com Reduce Motion ativo, a mesma transação atualiza o estado sem
+movimento.
+
+Critérios desta decisão: cada clique válido que altera a ordem participa da
+transação explícita; adicionar e retirar a estrela usam o mesmo caminho; a
+persistência continua assíncrona e confiável; atualizações sem gesto não ganham
+animação incidental; e Reduce Motion continua respeitado.
+
+O gate consolidado executou 55 testes focados e 189 testes completos sem falhas,
+com 1 integração Keychain opt-in omitida. Build release, verificação de diff e
+revisão independente foram aprovados sem achados altos ou médios. A alternância
+nos dois sentidos também foi confirmada manualmente na aplicação instalada.
+
+### 21.22 Reabertura pelo Dock e acesso contextual aos ajustes
+
+O ícone de aplicativo no Dock não pode ser um destino sem ação quando a pessoa
+o fixa manualmente e não há dashboard aberto. Uma solicitação de reabertura do
+macOS — inclusive o clique nesse tile fixado — passa pelo mesmo coordenador
+único de janelas usado pela menu bar, atalhos, notificações e ações contextuais.
+Assim, ela aplica o contrato **abrir ou focar**: cria o dashboard quando ele não
+existe; caso exista, restaura-o se minimizado, ativa o aplicativo e dá foco à
+mesma janela. O fluxo não cria uma segunda janela e continua sujeito à política
+normal de ativação do macOS, sem comportamento sempre acima.
+
+O dashboard também oferece um controle nativo de Settings na toolbar, com
+símbolo, rótulo acessível e dica de ajuda. A ação abre ou foca a única cena de
+ajustes já existente; não cria um painel de configuração paralelo dentro do
+dashboard. A menu bar e o atalho padrão Command-Comma permanecem rotas
+equivalentes para a mesma cena, de modo que nenhuma superfície passe a ser
+obrigatória para operar o aplicativo.
+
+Essa decisão preserva a presença prioritária na menu bar e a política transitória
+do Dock: o tile pode iniciar uma sessão de dashboard quando estiver fixado, mas
+fechar o dashboard continua devolvendo o aplicativo ao modo acessório e não
+interrompe polling, notificações ou estado local.
+
+Critérios de aceite deste incremento: clicar no tile do Dock sem dashboard abre
+uma única janela; clicar com dashboard aberto ou minimizado restaura e foca essa
+instância; o botão de Settings do dashboard abre ou foca a cena existente e é
+acessível por teclado e VoiceOver; menu bar e Command-Comma preservam o mesmo
+destino; e nenhuma dessas rotas muda a política de monitoramento em segundo
+plano. As evidências de testes, build, revisão independente e QA visual estão
+registradas no planejamento após a integração.
+
+### 21.23 Estado efetivo de pipeline e aprovações manuais
+
+O estado exibido de uma pipeline não pode ser derivado somente de
+`pipeline.state`. O Bitbucket pode manter a pipeline em progresso enquanto ela
+aguarda uma ação manual. A resolução deve combinar, em uma política única, o
+estado e o resultado da pipeline, as etapas na ordem retornada e o tipo de
+gatilho de cada etapa.
+
+A interpretação reconhece somente uma allowlist versionada de valores remotos
+conhecidos para nome, resultado, estágio e tipo de gatilho. Valores fora dessa
+lista, inclusive combinações contraditórias, permanecem `unknown` com os dados
+remotos preservados. A precedência é conservadora:
+
+1. um resultado terminal explícito da pipeline prevalece sobre as etapas e é
+   normalizado como sucesso, falha, erro, parada ou expiração, conforme o
+   contrato conhecido;
+2. qualquer valor de estado ou resultado remoto não reconhecido produz
+   `unknown`, preservando os valores recebidos e sem inferir execução ou
+   sucesso;
+3. para uma pipeline `IN_PROGRESS`, o estágio explícito `PAUSED` produz
+   diretamente `awaitingApproval`;
+4. no estágio `RUNNING`, ou na ausência de estágio, as etapas ordenadas resolvem
+   a fase: uma etapa em execução produz `running`; sem etapa em execução, a
+   primeira etapa ainda ativa que esteja pendente e use gatilho manual produz
+   `awaitingApproval`; uma etapa `READY` automática produz `queued`;
+5. uma etapa com resultado `NOT_RUN` produz `stopped`, sem ser confundida com
+   sucesso, fila ou trabalho em execução; os demais casos em progresso
+   permanecem conservadores, sem converter ausência de informação em estado
+   saudável.
+
+Essa interpretação deve ser aplicada uma única vez no domínio e consumida sem
+adaptações divergentes pela lista, detalhe, filtros, saúde agregada, política de
+polling e notificações. Em particular, uma espera por aprovação não pode entrar
+no filtro de execução, receber a cadência curta de um trabalho realmente ativo
+nem gerar uma transição de notificação incompatível com a fase normalizada.
+O filtro Attention deve incluir `stopped` e `unknown`, além dos resultados de
+falha já atendidos, para que um resultado não saudável ou não interpretável não
+desapareça da superfície de revisão.
+
+Os testes precisam usar fixtures sanitizadas e cobrir resultados terminais,
+valores remotos desconhecidos, os estágios `RUNNING` e `PAUSED`, execução real,
+etapa `READY`, resultado `NOT_RUN`, fila automática e espera manual, inclusive
+quando a pipeline geral ainda estiver em progresso. Nenhuma fixture deve conter
+identificação de conta, repositório, pessoa, commit ou URL real.
+
+Gate consolidado desta decisão: `swift test --quiet` executou 202 testes sem
+falhas, com 1 integração Keychain opt-in omitida; build release, build universal
+para `arm64` e `x86_64`, verificação estrita de assinatura, geração e validação
+do DMG, verificação do sidecar SHA-256 e `git diff --check` foram aprovados. A
+revisão independente não encontrou achados bloqueadores após a correção de P1.

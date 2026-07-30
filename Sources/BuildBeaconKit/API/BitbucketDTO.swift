@@ -96,11 +96,12 @@ struct BitbucketPipelineStepDTO: Decodable {
     let uuid: String?
     let name: String?
     let state: BitbucketStateDTO?
+    let trigger: BitbucketPipelineStepTriggerDTO?
     let startedOn: Date?
     let completedOn: Date?
 
     enum CodingKeys: String, CodingKey {
-        case uuid, name, state
+        case uuid, name, state, trigger
         case startedOn = "started_on"
         case completedOn = "completed_on"
     }
@@ -110,18 +111,29 @@ struct BitbucketPipelineStepDTO: Decodable {
         uuid = try? container.decode(String.self, forKey: .uuid)
         name = try? container.decode(String.self, forKey: .name)
         state = try? container.decode(BitbucketStateDTO.self, forKey: .state)
+        trigger = try? container.decode(BitbucketPipelineStepTriggerDTO.self, forKey: .trigger)
         startedOn = container.decodeLossyDate(forKey: .startedOn)
         completedOn = container.decodeLossyDate(forKey: .completedOn)
     }
+}
+
+struct BitbucketPipelineStepTriggerDTO: Decodable {
+    let type: String?
 }
 
 struct BitbucketStateDTO: Decodable {
     let name: String?
     let type: String?
     let result: BitbucketResultDTO?
+    let stage: BitbucketPipelineStageDTO?
 }
 
 struct BitbucketResultDTO: Decodable {
+    let name: String?
+    let type: String?
+}
+
+struct BitbucketPipelineStageDTO: Decodable {
     let name: String?
     let type: String?
 }

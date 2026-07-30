@@ -3,6 +3,8 @@ import SwiftUI
 
 public struct DashboardView: View {
     @Bindable private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openSettings) private var openSettings
     @State private var filter: DashboardFilter = .all
     @State private var projectFilter: DashboardProjectFilter = .all
     @State private var searchText = ""
@@ -17,11 +19,22 @@ public struct DashboardView: View {
             return switch filter {
             case .all: true
             case .recent: model.isActivityUnseen(observation)
-            case .attention: observation.currentFailure != nil || phase == .failed || phase == .errored || phase == .expired
+            case .attention:
+                observation.currentFailure != nil
+                    || phase == .failed
+                    || phase == .errored
+                    || phase == .expired
+                    || phase == .stopped
+                    || isUnknown(phase)
             case .running: phase == .running || phase == .queued
             case .approval: phase == .awaitingApproval
             }
         }
+    }
+
+    private func isUnknown(_ phase: PipelinePhase?) -> Bool {
+        if case .unknown? = phase { return true }
+        return false
     }
 
     private var activePresentationPreferences: MonitorPresentationPreferences {
@@ -135,11 +148,17 @@ public struct DashboardView: View {
                                         observation: observation,
                                         refreshIntervalSeconds: model.refreshIntervalSeconds,
                                         isUnseen: model.isActivityUnseen(observation),
+                                        isFavoriteToggleDisabled: model.isMutatingMonitors,
                                         toggleFavorite: {
-                                            Task { await model.toggleFavorite(for: observation.monitor.id) }
-                                        },
-                                        markActivitySeen: {
-                                            Task { await model.markActivitySeen(for: observation) }
+                                            withAnimation(
+                                                reduceMotion
+                                                    ? nil
+                                                    : .easeInOut(
+                                                        duration: DashboardRepositoryRowMetrics.favoriteReorderAnimationDuration
+                                                    )
+                                            ) {
+                                                _ = model.beginFavoriteToggle(for: observation.monitor.id)
+                                            }
                                         }
                                     )
                                     .tag(observation.monitor.id)
@@ -187,6 +206,16 @@ public struct DashboardView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    openSettings()
+                } label: {
+                    Label("Open Settings", systemImage: "gearshape")
+                }
+                .help("Open Settings")
+                .accessibilityLabel("Open Settings")
+            }
+
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await model.refresh() }
@@ -308,8 +337,8 @@ private struct MonitorDashboardRow: View {
     let observation: MonitorObservation
     let refreshIntervalSeconds: Int
     let isUnseen: Bool
+    let isFavoriteToggleDisabled: Bool
     let toggleFavorite: () -> Void
-    let markActivitySeen: () -> Void
 
     private var state: ObservationVisualState {
         observation.visualState(refreshIntervalSeconds: refreshIntervalSeconds)
@@ -354,15 +383,19 @@ private struct MonitorDashboardRow: View {
                 .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { markActivitySeen() })
 
             Button(action: toggleFavorite) {
                 Image(systemName: observation.monitor.isFavorite ? "star.fill" : "star")
                     .foregroundStyle(observation.monitor.isFavorite ? .yellow : .secondary)
                     .frame(width: 22, height: 22)
+                    .frame(
+                        width: DashboardRepositoryRowMetrics.favoriteButtonHitTargetSize,
+                        height: DashboardRepositoryRowMetrics.favoriteButtonHitTargetSize
+                    )
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
+            .disabled(isFavoriteToggleDisabled)
             .help(observation.monitor.isFavorite ? "Remove from favorites" : "Add to favorites")
             .accessibilityLabel(observation.monitor.isFavorite ? "Remove \(observation.monitor.repositoryName) from favorites" : "Add \(observation.monitor.repositoryName) to favorites")
 

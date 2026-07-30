@@ -392,6 +392,447 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(runtime.configuration.monitors[0].isPinned)
     }
 
+    func testToggleFavoriteUpdatesVisibleSnapshotBeforeConfigurationSaveCompletes() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let first = monitor(id: "first", in: workspace, accountID: model.configuration.account!.id)
+        let favorite = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [first, favorite]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: .now,
+            completedAt: .now,
+            reason: .scheduled,
+            observations: [
+                first.id: MonitorObservation(monitor: first),
+                favorite.id: MonitorObservation(monitor: favorite)
+            ],
+            aggregateState: .healthy
+        )
+        await model.refresh()
+        model.selectedMonitorID = favorite.id
+        runtime.suspendsConfigurationSave = true
+
+        let toggle = Task { @MainActor in
+            await model.toggleFavorite(for: favorite.id)
+        }
+        await runtime.waitForConfigurationSave()
+
+        XCTAssertTrue(model.configuration.monitors[1].isPinned)
+        XCTAssertTrue(model.snapshot?.observations[favorite.id]?.monitor.isPinned == true)
+        XCTAssertTrue(model.selectedObservation?.monitor.isPinned == true)
+        XCTAssertEqual(model.selectedMonitorID, favorite.id)
+        XCTAssertFalse(runtime.configuration.monitors[1].isPinned)
+        let visible = DashboardOrganization.visibleObservations(
+            model.sortedObservations,
+            projectFilter: .all,
+            searchText: "",
+            preferences: model.monitorPresentation
+        )
+        XCTAssertEqual(visible.map(\.monitor.id), [favorite.id, first.id])
+
+        runtime.resumeConfigurationSave()
+        await toggle.value
+
+        XCTAssertTrue(runtime.configuration.monitors[1].isPinned)
+    }
+
+    func testBeginFavoriteToggleUpdatesConfigurationAndSnapshotBeforeReturning() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let first = monitor(id: "first", in: workspace, accountID: model.configuration.account!.id)
+        let favorite = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [first, favorite]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: .now,
+            completedAt: .now,
+            reason: .scheduled,
+            observations: [
+                first.id: MonitorObservation(monitor: first),
+                favorite.id: MonitorObservation(monitor: favorite)
+            ],
+            aggregateState: .healthy
+        )
+        await model.refresh()
+        runtime.suspendsConfigurationSave = true
+
+        let persistence = model.beginFavoriteToggle(for: favorite.id)
+
+        XCTAssertNotNil(persistence)
+        XCTAssertTrue(model.configuration.monitors[1].isPinned)
+        XCTAssertTrue(model.snapshot?.observations[favorite.id]?.monitor.isPinned == true)
+        XCTAssertEqual(model.sortedObservations.map(\.monitor.id), [favorite.id, first.id])
+        XCTAssertFalse(runtime.configuration.monitors[1].isPinned)
+
+        await runtime.waitForConfigurationSave()
+        XCTAssertFalse(runtime.configuration.monitors[1].isPinned)
+        runtime.resumeConfigurationSave()
+        await persistence?.value
+
+        XCTAssertTrue(runtime.configuration.monitors[1].isPinned)
+    }
+
+    func testToggleFavoriteRestoresVisibleSnapshotWhenConfigurationSaveFails() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let favorite = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [favorite]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(monitor: favorite, nextRefreshAt: nil)
+        await model.refresh()
+        model.selectedMonitorID = favorite.id
+        runtime.suspendsConfigurationSave = true
+        runtime.saveConfigurationError = RuntimeStubError.expectedFailure
+
+        let toggle = Task { @MainActor in
+            await model.toggleFavorite(for: favorite.id)
+        }
+        await runtime.waitForConfigurationSave()
+
+        XCTAssertTrue(model.configuration.monitors[0].isPinned)
+        XCTAssertTrue(model.selectedObservation?.monitor.isPinned == true)
+
+        runtime.resumeConfigurationSave()
+        await toggle.value
+
+        XCTAssertFalse(model.configuration.monitors[0].isPinned)
+        XCTAssertTrue(model.selectedObservation?.monitor.isPinned == false)
+        XCTAssertEqual(model.selectedMonitorID, favorite.id)
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    func testRapidFavoriteOnThenOffAcceptsBothClicksAndPersistsTheirOrder() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitored = monitor(id: "rapid", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitored]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let pin = Task { @MainActor in await model.toggleFavorite(for: monitored.id) }
+        await runtime.waitForConfigurationSave()
+        let unpin = Task { @MainActor in await model.toggleFavorite(for: monitored.id) }
+        await Task.yield()
+
+        XCTAssertFalse(model.configuration.monitors[0].isPinned)
+        runtime.resumeConfigurationSave()
+        await pin.value
+        await unpin.value
+
+        XCTAssertEqual(runtime.saveConfigurationCalls, 2)
+        XCTAssertFalse(model.configuration.monitors[0].isPinned)
+        XCTAssertFalse(runtime.configuration.monitors[0].isPinned)
+    }
+
+    func testRapidFavoriteOffThenOnAcceptsBothClicksAndPersistsTheirOrder() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        var monitored = monitor(id: "rapid", in: workspace, accountID: model.configuration.account!.id)
+        monitored.isPinned = true
+        model.configuration.monitors = [monitored]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let unpin = Task { @MainActor in await model.toggleFavorite(for: monitored.id) }
+        await runtime.waitForConfigurationSave()
+        let pin = Task { @MainActor in await model.toggleFavorite(for: monitored.id) }
+        await Task.yield()
+
+        XCTAssertTrue(model.configuration.monitors[0].isPinned)
+        runtime.resumeConfigurationSave()
+        await unpin.value
+        await pin.value
+
+        XCTAssertEqual(runtime.saveConfigurationCalls, 2)
+        XCTAssertTrue(model.configuration.monitors[0].isPinned)
+        XCTAssertTrue(runtime.configuration.monitors[0].isPinned)
+    }
+
+    func testRapidFavoriteTogglesForDifferentMonitorsBothPersist() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let first = monitor(id: "first", in: workspace, accountID: model.configuration.account!.id)
+        let second = monitor(id: "second", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [first, second]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let firstToggle = Task { @MainActor in await model.toggleFavorite(for: first.id) }
+        await runtime.waitForConfigurationSave()
+        let secondToggle = Task { @MainActor in await model.toggleFavorite(for: second.id) }
+        await Task.yield()
+
+        XCTAssertTrue(model.configuration.monitors.allSatisfy(\.isPinned))
+        runtime.resumeConfigurationSave()
+        await firstToggle.value
+        await secondToggle.value
+
+        XCTAssertEqual(runtime.saveConfigurationCalls, 2)
+        XCTAssertTrue(runtime.configuration.monitors.allSatisfy(\.isPinned))
+    }
+
+    func testFailedOlderFavoriteSaveCannotOverrideNewerFavoriteIntent() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitored = monitor(id: "failure", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitored]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let pin = Task { @MainActor in await model.toggleFavorite(for: monitored.id) }
+        await runtime.waitForConfigurationSave()
+        let unpin = Task { @MainActor in await model.toggleFavorite(for: monitored.id) }
+        runtime.saveConfigurationFailuresRemaining = 1
+        runtime.resumeConfigurationSave()
+        await pin.value
+        await unpin.value
+
+        XCTAssertFalse(model.configuration.monitors[0].isPinned)
+        XCTAssertFalse(runtime.configuration.monitors[0].isPinned)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testFailedFavoriteForOneMonitorDoesNotReintroduceItWhenLaterMonitorPersists() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let first = monitor(id: "first-failure", in: workspace, accountID: model.configuration.account!.id)
+        let second = monitor(id: "second-success", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [first, second]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let firstToggle = Task { @MainActor in await model.toggleFavorite(for: first.id) }
+        await runtime.waitForConfigurationSave()
+        let secondToggle = Task { @MainActor in await model.toggleFavorite(for: second.id) }
+        runtime.saveConfigurationFailuresRemaining = 1
+        runtime.resumeConfigurationSave()
+        await firstToggle.value
+        await secondToggle.value
+
+        XCTAssertFalse(model.configuration.monitors[0].isPinned)
+        XCTAssertTrue(model.configuration.monitors[1].isPinned)
+        XCTAssertFalse(runtime.configuration.monitors[0].isPinned)
+        XCTAssertTrue(runtime.configuration.monitors[1].isPinned)
+    }
+
+    func testFailedLatestFavoriteIntentRollsBackToLastConfirmedState() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitored = monitor(id: "latest-failure", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitored]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let pin = Task { @MainActor in await model.toggleFavorite(for: monitored.id) }
+        await runtime.waitForConfigurationSave()
+        let unpin = Task { @MainActor in await model.toggleFavorite(for: monitored.id) }
+        runtime.saveConfigurationFailureCallNumbers = [2]
+        runtime.resumeConfigurationSave()
+        await pin.value
+        await unpin.value
+
+        XCTAssertTrue(model.configuration.monitors[0].isPinned)
+        XCTAssertTrue(runtime.configuration.monitors[0].isPinned)
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    func testStructuralMonitorMutationsWaitForPendingFavoritePersistence() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let favorite = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        let removable = monitor(id: "removable", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [favorite, removable]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let toggle = Task { @MainActor in await model.toggleFavorite(for: favorite.id) }
+        await runtime.waitForConfigurationSave()
+        await model.removeMonitor(removable.id)
+        XCTAssertEqual(runtime.setMonitorsCalls, 0)
+
+        runtime.resumeConfigurationSave()
+        await toggle.value
+        await model.removeMonitor(removable.id)
+
+        XCTAssertEqual(runtime.setMonitorsCalls, 1)
+        XCTAssertEqual(model.configuration.monitors.map(\.id), [favorite.id])
+    }
+
+    func testFavoriteSaveDoesNotDiscardNewUnseenActivityCreatedWhileItIsSuspended() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(monitor: monitor, runID: "first", buildNumber: 1)
+        await model.refresh()
+        runtime.suspendsConfigurationSave = true
+
+        let favorite = Task { @MainActor in
+            await model.toggleFavorite(for: monitor.id)
+        }
+        await runtime.waitForConfigurationSave()
+
+        runtime.refreshSnapshot = snapshot(monitor: monitor, runID: "second", buildNumber: 2)
+        await model.refresh()
+        XCTAssertEqual(model.configuration.unseenActivity.map(\.runID), [PipelineRunID(rawValue: "second")])
+
+        runtime.resumeConfigurationSave()
+        await favorite.value
+        await settleActivityPersistence()
+
+        XCTAssertTrue(model.configuration.monitors[0].isPinned)
+        XCTAssertEqual(model.configuration.unseenActivity.map(\.runID), [PipelineRunID(rawValue: "second")])
+        XCTAssertTrue(runtime.configuration.monitors[0].isPinned)
+        XCTAssertEqual(runtime.configuration.unseenActivity.map(\.runID), [PipelineRunID(rawValue: "second")])
+    }
+
+    func testOverlappingFavoriteAndPreferenceSavesPreserveBothLatestIntentions() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let favorite = Task { @MainActor in
+            await model.toggleFavorite(for: monitor.id)
+        }
+        await runtime.waitForConfigurationSave()
+
+        let preferences = Task { @MainActor in
+            await model.setNotificationsEnabled(false)
+        }
+        await Task.yield()
+        runtime.resumeConfigurationSave()
+        await favorite.value
+        await preferences.value
+
+        XCTAssertTrue(model.configuration.monitors[0].isPinned)
+        XCTAssertFalse(model.configuration.notificationsEnabled)
+        XCTAssertTrue(runtime.configuration.monitors[0].isPinned)
+        XCTAssertFalse(runtime.configuration.notificationsEnabled)
+    }
+
+    func testFailedFavoriteRollsBackBeforeQueuedPreferenceIsPersisted() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let favorite = Task { @MainActor in
+            await model.toggleFavorite(for: monitor.id)
+        }
+        await runtime.waitForConfigurationSave()
+        let preference = Task { @MainActor in
+            await model.setNotificationsEnabled(false)
+        }
+        await Task.yield()
+
+        runtime.saveConfigurationFailuresRemaining = 1
+        runtime.resumeConfigurationSave()
+        await favorite.value
+        await preference.value
+
+        XCTAssertFalse(model.configuration.monitors[0].isPinned)
+        XCTAssertFalse(model.configuration.notificationsEnabled)
+        XCTAssertFalse(runtime.configuration.monitors[0].isPinned)
+        XCTAssertFalse(runtime.configuration.notificationsEnabled)
+    }
+
+    func testFailedPreferenceRollsBackBeforeQueuedFavoriteIsPersisted() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "favorite", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.suspendsConfigurationSave = true
+
+        let preference = Task { @MainActor in
+            await model.setNotificationsEnabled(false)
+        }
+        await runtime.waitForConfigurationSave()
+        let favorite = Task { @MainActor in
+            await model.toggleFavorite(for: monitor.id)
+        }
+        await Task.yield()
+
+        runtime.saveConfigurationFailuresRemaining = 1
+        runtime.resumeConfigurationSave()
+        await preference.value
+        await favorite.value
+
+        XCTAssertTrue(model.configuration.notificationsEnabled)
+        XCTAssertTrue(model.configuration.monitors[0].isPinned)
+        XCTAssertTrue(runtime.configuration.notificationsEnabled)
+        XCTAssertTrue(runtime.configuration.monitors[0].isPinned)
+    }
+
+    func testStaleSuspendedPreferenceFailureCannotRollBackOrReportIntoNewAccountSession() async {
+        let (model, runtime, _) = makeConnectedModel()
+        runtime.suspendsConfigurationSave = true
+
+        let preference = Task { @MainActor in
+            await model.setNotificationsEnabled(false)
+        }
+        await runtime.waitForConfigurationSave()
+
+        let disconnect = Task { @MainActor in
+            await model.disconnect()
+        }
+        await Task.yield()
+        runtime.saveConfigurationFailuresRemaining = 1
+        runtime.resumeConfigurationSave()
+        await preference.value
+        await disconnect.value
+
+        XCTAssertNil(model.configuration.account)
+        XCTAssertTrue(model.configuration.notificationsEnabled)
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertNil(runtime.configuration.account)
+        XCTAssertEqual(runtime.saveConfigurationCalls, 1)
+    }
+
+    func testDisconnectWaitsForSuspendedConfigurationSaveThenWinsDurably() async {
+        let (model, runtime, _) = makeConnectedModel()
+        runtime.suspendsConfigurationSave = true
+
+        let preference = Task { @MainActor in
+            await model.setNotificationsEnabled(false)
+        }
+        await runtime.waitForConfigurationSave()
+        let disconnect = Task { @MainActor in
+            await model.disconnect()
+        }
+        await Task.yield()
+
+        XCTAssertNotNil(runtime.configuration.account)
+        runtime.resumeConfigurationSave()
+        await preference.value
+        await disconnect.value
+
+        XCTAssertNil(model.configuration.account)
+        XCTAssertNil(runtime.configuration.account)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testFailedPreferenceSettlesBeforeFailedAccountBarrier() async {
+        let (model, runtime, _) = makeConnectedModel()
+        runtime.suspendsConfigurationSave = true
+
+        let preference = Task { @MainActor in
+            await model.setNotificationsEnabled(false)
+        }
+        await runtime.waitForConfigurationSave()
+        let disconnect = Task { @MainActor in
+            await model.disconnect()
+        }
+        await Task.yield()
+
+        runtime.saveConfigurationFailuresRemaining = 1
+        runtime.disconnectError = ObservationFailure.offline
+        runtime.resumeConfigurationSave()
+        await preference.value
+        await disconnect.value
+
+        XCTAssertTrue(model.configuration.notificationsEnabled)
+        XCTAssertTrue(runtime.configuration.notificationsEnabled)
+        XCTAssertNotNil(model.configuration.account)
+        XCTAssertNotNil(runtime.configuration.account)
+        XCTAssertEqual(model.errorMessage, "The Mac appears to be offline.")
+    }
+
     func testSavePresentationAndHistoryPreferencePersistsTogether() async {
         let (model, runtime, _) = makeConnectedModel()
         let preferences = MonitorPresentationPreferences(
@@ -589,9 +1030,13 @@ final class AppModelTests: XCTestCase {
         runtime.refreshSnapshot = snapshot(monitor: secondMonitor, runID: "replacement-1", buildNumber: 1)
         model.email = secondAccount.email
         model.token = "token"
-        let connected = await model.connect()
-        XCTAssertTrue(connected)
+        let connect = Task { @MainActor in
+            await model.connect()
+        }
+        await Task.yield()
         runtime.resumeUnseenActivitySave()
+        let connected = await connect.value
+        XCTAssertTrue(connected)
         await settleActivityPersistence()
 
         XCTAssertEqual(model.configuration.account?.id, secondAccount.id)
@@ -881,13 +1326,17 @@ private final class RuntimeStub: BuildBeaconRuntime {
     var workspaces: [WorkspaceInfo] = []
     var suspendsConfigurationLoad = false
     var connectError: (any Error)?
+    var disconnectError: (any Error)?
     var lastConnectedEmail: String?
     var lastConnectedToken: String?
     var setMonitorsCalls = 0
     var setMonitorsArguments: [[MonitorConfiguration]] = []
     var setMonitorsError: (any Error)?
     var saveConfigurationError: (any Error)?
+    var saveConfigurationFailuresRemaining = 0
+    var saveConfigurationFailureCallNumbers: Set<Int> = []
     var saveConfigurationCalls = 0
+    var suspendsConfigurationSave = false
     var saveUnseenActivityError: (any Error)?
     var saveUnseenActivityCalls = 0
     var suspendsUnseenActivitySave = false
@@ -909,6 +1358,8 @@ private final class RuntimeStub: BuildBeaconRuntime {
     private var configurationLoadWaiters: [CheckedContinuation<Void, Never>] = []
     private var unseenActivitySaveContinuation: CheckedContinuation<Void, Never>?
     private var unseenActivitySaveWaiters: [CheckedContinuation<Void, Never>] = []
+    private var configurationSaveContinuation: CheckedContinuation<Void, Never>?
+    private var configurationSaveWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(configuration: AppConfiguration) {
         self.configuration = configuration
@@ -945,6 +1396,21 @@ private final class RuntimeStub: BuildBeaconRuntime {
         configurationLoadContinuation = nil
     }
 
+    func waitForConfigurationSave() async {
+        guard saveConfigurationCalls > 0 else {
+            await withCheckedContinuation { continuation in
+                configurationSaveWaiters.append(continuation)
+            }
+            return
+        }
+    }
+
+    func resumeConfigurationSave() {
+        suspendsConfigurationSave = false
+        configurationSaveContinuation?.resume()
+        configurationSaveContinuation = nil
+    }
+
     func waitForUnseenActivitySave() async {
         guard saveUnseenActivityCalls > 0 else {
             await withCheckedContinuation { continuation in
@@ -970,6 +1436,7 @@ private final class RuntimeStub: BuildBeaconRuntime {
     func revalidate() async throws -> AppConfiguration { configuration }
 
     func disconnect() async throws -> AppConfiguration {
+        if let disconnectError { throw disconnectError }
         configuration.account = nil
         return configuration
     }
@@ -1010,6 +1477,20 @@ private final class RuntimeStub: BuildBeaconRuntime {
 
     func saveConfiguration(_ configuration: AppConfiguration) async throws -> AppConfiguration {
         saveConfigurationCalls += 1
+        configurationSaveWaiters.forEach { $0.resume() }
+        configurationSaveWaiters = []
+        if suspendsConfigurationSave {
+            await withCheckedContinuation { continuation in
+                configurationSaveContinuation = continuation
+            }
+        }
+        if saveConfigurationFailuresRemaining > 0 {
+            saveConfigurationFailuresRemaining -= 1
+            throw saveConfigurationError ?? RuntimeStubError.expectedFailure
+        }
+        if saveConfigurationFailureCallNumbers.remove(saveConfigurationCalls) != nil {
+            throw saveConfigurationError ?? RuntimeStubError.expectedFailure
+        }
         if let saveConfigurationError { throw saveConfigurationError }
         self.configuration = configuration
         return configuration

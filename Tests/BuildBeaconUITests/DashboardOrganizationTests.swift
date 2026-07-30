@@ -61,6 +61,22 @@ final class DashboardOrganizationTests: XCTestCase {
         XCTAssertEqual(visible.map(\.monitor.repositoryName), ["favorite", "failed", "healthy"])
     }
 
+    func testStatusSortPlacesApprovalAfterFailuresAndBeforeActivePipelines() {
+        let failed = observation("failed", phase: .failed)
+        let approval = observation("approval", phase: .awaitingApproval)
+        let running = observation("running", phase: .running)
+        let healthy = observation("healthy", phase: .succeeded)
+
+        let visible = DashboardOrganization.visibleObservations(
+            [healthy, running, approval, failed],
+            projectFilter: .all,
+            searchText: "",
+            preferences: .init(sortOrder: .status, favoritesFirst: false)
+        )
+
+        XCTAssertEqual(visible.map(\.monitor.repositoryName), ["failed", "approval", "running", "healthy"])
+    }
+
     func testProjectGroupingPlacesUnassignedInOwnSection() {
         let mobile = observation("mobile", project: "Mobile")
         let unassigned = observation("misc")

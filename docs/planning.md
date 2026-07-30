@@ -1779,3 +1779,229 @@ Validação final:
 | `git diff --check` e scan público | aprovados |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.19 Incremento entregue — interação e favoritismo da lista de repositórios
+
+Escopo e ownership:
+
+- UI da lista de repositórios: corrigir hit testing para que toda área textual
+  ou vazia da linha selecione o monitor, mantendo a estrela como controle de
+  ação exclusiva;
+- estado/aplicação de favoritos: aplicar feedback otimista, persistir sem
+  bloquear a UI e reverter de forma segura quando a persistência falhar;
+- ordenação e apresentação: animar a mudança de posição causada por favorito,
+  respeitando Reduce Motion e preservando a seleção por identidade do monitor;
+- integrador: preencher as evidências da tabela de validação e atualizar a
+  contagem pública de testes somente após os gates executados.
+
+Critérios de aceitação verificados:
+
+- nome, metadados e espaços vazios da célula selecionam a respectiva linha;
+- a estrela tem hit target confiável, alterna apenas o favorito e não dispara
+  seleção da linha;
+- o feedback de favorito é imediato, enquanto persistência e snapshots não
+  atrasam a interação;
+- erro de persistência restaura o valor confirmado sem corromper a ordenação;
+- favoritos sobem na lista com transição visual quando Reduce Motion está
+  desativado e sem animação desnecessária quando está ativado;
+- a seleção acompanha o mesmo `MonitorID` durante reorder e refresh.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| testes focados de favorito, rollback, concorrência, reorder e Reduce Motion | 47 testes executados, 0 falhas |
+| `swift test --quiet` | 181 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| `git diff --check` | aprovado |
+| revisão independente | sem achados altos ou médios após correções |
+
+Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.20 Incremento entregue — alternância confiável de favoritos
+
+Escopo e ownership:
+
+- estado de favoritos: remover o bloqueio global que descartava uma alternância
+  válida enquanto outra persistência estivesse em voo;
+- persistência: serializar por `MonitorID` e valor desejado, preservando a
+  intenção mais recente e impedindo que uma falha antiga reverta um clique novo;
+- coleção: manter add/remove estruturais bloqueados enquanto favoritos estiverem
+  pendentes, para não concorrer com a preferência otimista, e desabilitar a
+  estrela explicitamente durante a mutação estrutural;
+- UI: manter resposta imediata da estrela e animar somente reordenação real,
+  com Reduce Motion respeitado;
+- documentação: registrar os gates realmente executados, sem antecipar build
+  ou revisão que ainda não ocorreram.
+
+Critérios de aceitação verificados:
+
+- cada clique válido de favoritar ou desfavoritar é aplicado imediatamente,
+  mesmo durante uma persistência anterior;
+- persistências pendentes de favoritos não desabilitam a estrela; somente uma
+  mutação estrutural de add/remove a deixa explicitamente indisponível;
+- favoritos de monitores distintos não bloqueiam a interação uns dos outros;
+- uma falha antiga não substitui intenção posterior; se a última intenção falha,
+  o valor exibido retorna ao último estado confirmado;
+- add/remove de monitores não inicia enquanto existir favorito pendente;
+- a animação existente ocorre somente quando a ordenação realmente muda e fica
+  desativada quando Reduce Motion está ativo.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| testes focados de favorito, rollback, concorrência, reorder e Reduce Motion | 54 testes executados, 0 falhas |
+| `swift test --quiet` | 188 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| `git diff --check` | aprovado |
+| revisão independente | sem achados altos ou médios após correções |
+
+Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.21 Incremento entregue — transação explícita da animação de favoritos
+
+Escopo e ownership:
+
+- modelo de apresentação: expor uma entrada síncrona que aplica imediatamente a
+  intenção otimista e retorna a tarefa responsável pela persistência;
+- UI da lista: iniciar essa entrada dentro da transação explícita do clique e
+  remover a animação implícita vinculada ao conteúdo filtrado;
+- acessibilidade: manter o mesmo resultado sem movimento quando Reduce Motion
+  estiver ativo;
+- documentação e integração: atualizar evidências, build, pacote e publicação
+  depois da validação funcional na aplicação instalada.
+
+Critérios de aceitação verificados:
+
+- favoritar e desfavoritar entram deterministicamente na transação do gesto;
+- o estado e a ordem mudam antes do retorno da entrada síncrona;
+- persistência, rollback e semântica da intenção mais recente permanecem
+  assíncronos e compatíveis com a API anterior;
+- polling e outras mudanças de lista não disparam a animação do favorito;
+- Reduce Motion elimina a transição sem alterar o resultado da ordenação.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| testes focados do modelo e métricas da lista | 55 testes executados, 0 falhas |
+| `swift test --quiet` | 189 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| `git diff --check` | aprovado |
+| revisão independente | sem achados altos ou médios |
+| aplicação instalada | favoritar e desfavoritar confirmados manualmente |
+
+Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.22 Incremento entregue — reabertura pelo Dock e Settings no dashboard
+
+Escopo e ownership:
+
+- ciclo de vida e coordenador de janela: tratar a solicitação de reabertura do
+  macOS, inclusive o clique em um tile do Dock fixado sem dashboard, como mais
+  uma rota para o coordenador único abrir-ou-focar;
+- dashboard UI: incluir um controle nativo e acessível de Settings na toolbar,
+  sem criar uma segunda superfície de configuração;
+- documentação: manter README, decisão, aceite e a contagem pública atual
+  coerentes com os gates executados.
+
+Contrato estabilizado:
+
+- clique no Dock com dashboard ausente cria o dashboard por meio do coordenador
+  único;
+- clique no Dock com dashboard aberto ou minimizado restaura, ativa e foca a
+  instância existente;
+- pedidos concorrentes continuam coalescidos e nunca criam dashboards
+  duplicados;
+- o controle de Settings abre ou foca a cena de ajustes existente, preservando
+  as rotas pela menu bar e Command-Comma;
+- o botão tem nome, dica e navegação por teclado adequados e usa texto
+  localizado em inglês e pt-BR;
+- fechar o dashboard preserva menu bar, polling, notificações e estado local.
+
+Critérios de aceite verificados:
+
+- um tile fixado no Dock deixa de ser inerte quando não há dashboard;
+- reabrir pelo Dock não duplica janelas e restaura uma janela minimizada;
+- Settings é alcançável tanto na toolbar do dashboard quanto pelas rotas
+  existentes;
+- a interação é coberta por testes determinísticos, além dos gates regulares
+  do repositório.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| `swift test --quiet` | 192 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| bundle universal ad-hoc | build, assinatura e validação do bundle aprovados |
+| QA visual | reabertura após fechamento e Settings confirmados no bundle local; clique físico no tile do Dock não exposto pela automação |
+| revisão independente | sem achados altos ou médios; achado baixo de ajuda contextual corrigido |
+| `git diff --check` | aprovado na checagem consolidada |
+
+Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.23 Incremento entregue: resolução auditável de estados Bitbucket
+
+Escopo e ownership:
+
+- contrato API e mapeamento: decodificar nome, resultado e estágio da pipeline,
+  além do estado, resultado e gatilho da etapa, fornecendo-os ordenadamente ao
+  resolvedor;
+- domínio: centralizar a precedência de resultados terminais, estado remoto
+  desconhecido, execução real, fila automática, espera por aprovação manual e
+  parada sem execução;
+- consumidores: usar a fase normalizada existente de modo consistente em
+  filtros, lista, detalhe, saúde agregada, polling e notificações;
+- testes: adicionar fixtures sanitizadas e cenários determinísticos sem dados
+  de contas, repositórios, pessoas, commits ou URLs reais;
+- documentação: registrar a decisão em `discussion.md` e explicar o suporte a
+  aprovações manuais no README, sem antecipar contagem de testes ou resultado de
+  gates.
+
+Contrato estabilizado:
+
+- resultados terminais explícitos têm precedência sobre o estado das etapas;
+- valor remoto não reconhecido permanece `unknown` e nunca é apresentado como
+  sucesso ou execução por inferência;
+- nomes, resultados, estágios e tipos de gatilho são reconhecidos somente por
+  allowlist explícita; combinação não reconhecida ou contraditória permanece
+  `unknown`;
+- em uma pipeline `IN_PROGRESS`, o estágio explícito `PAUSED` produz
+  `awaitingApproval` diretamente;
+- no estágio `RUNNING`, ou sem estágio explícito, a resolução ordenada das
+  etapas dá precedência a uma etapa em execução; sem execução, a primeira etapa
+  pendente com gatilho manual produz `awaitingApproval` e uma etapa `READY`
+  automática produz `queued`;
+- uma etapa com resultado `NOT_RUN` produz `stopped`;
+- `awaitingApproval` usa a política de polling e a semântica de notificação da
+  aprovação, não as de uma execução ativa.
+
+Critérios de aceite verificados:
+
+- a lista, o detalhe e os filtros apresentam a mesma fase para um mesmo
+  snapshot;
+- uma aprovação manual não aparece como `Running`;
+- resultados terminais e desconhecidos preservam a precedência conservadora;
+- `PAUSED`, `READY` e `NOT_RUN` são normalizados nas fases corretas;
+- o filtro Attention inclui `stopped` e `unknown`, sem mudar indevidamente o
+  escopo de filtros de execução ou aprovação;
+- o scheduler usa a cadência correta para cada fase normalizada;
+- notificações usam transições da fase resolvida, sem alerta duplicado ou
+  classificação incompatível;
+- en e pt-BR permanecem completos para toda nova string visível, se houver.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| `swift test --quiet` | 202 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| build universal | `arm64` e `x86_64` aprovados |
+| `codesign --verify --deep --strict` | aprovado |
+| DMG e sidecar SHA-256 | DMG 1.0.0 gerado, validado com `hdiutil` e sidecar verificado |
+| revisão independente | sem achados bloqueadores após a correção de P1 |
+| `git diff --check` | aprovado |
+
+Estado: entregue e aprovado para empacotamento Preview.
