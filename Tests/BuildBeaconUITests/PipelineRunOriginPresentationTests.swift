@@ -9,6 +9,7 @@ final class PipelineRunOriginPresentationTests: XCTestCase {
         XCTAssertEqual(display.badgeTitle, PipelineRunOriginPresentation.branchBadgeTitle)
         XCTAssertEqual(display.reference, "develop")
         XCTAssertNotNil(display.accessibilityLabel)
+        XCTAssertEqual(display.badgeStyle, .branch)
     }
 
     func testPullRequestDisplaysIdentifierAndBranchDirection() {
@@ -19,6 +20,7 @@ final class PipelineRunOriginPresentationTests: XCTestCase {
         XCTAssertTrue(display.badgeTitle?.contains("482") == true)
         XCTAssertEqual(display.reference, "feat/dashboard → dev")
         XCTAssertTrue(display.accessibilityLabel?.contains("482") == true)
+        XCTAssertEqual(display.badgeStyle, .pullRequest)
     }
 
     func testLongPullRequestReferencePreservesBothSemanticEndpoints() {
@@ -48,6 +50,7 @@ final class PipelineRunOriginPresentationTests: XCTestCase {
         XCTAssertNil(display.badgeTitle)
         XCTAssertEqual(display.reference, "release")
         XCTAssertNil(display.accessibilityLabel)
+        XCTAssertNil(display.badgeStyle)
     }
 
     func testOriginStringsExistInEnglishAndBrazilianPortuguese() throws {
