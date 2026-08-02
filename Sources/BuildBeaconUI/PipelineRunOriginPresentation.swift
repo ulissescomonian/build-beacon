@@ -5,6 +5,12 @@ struct PipelineRunOriginDisplay: Equatable {
     let badgeTitle: String?
     let reference: String?
     let accessibilityLabel: String?
+    let badgeStyle: PipelineRunOriginBadgeStyle?
+}
+
+enum PipelineRunOriginBadgeStyle: Equatable {
+    case branch
+    case pullRequest
 }
 
 enum PipelineRunOriginPresentation {
@@ -24,7 +30,8 @@ enum PipelineRunOriginPresentation {
             return PipelineRunOriginDisplay(
                 badgeTitle: branchBadgeTitle,
                 reference: branchName,
-                accessibilityLabel: branchAccessibilityLabel
+                accessibilityLabel: branchAccessibilityLabel,
+                badgeStyle: .branch
             )
 
         case let .pullRequest(id, sourceBranch, destinationBranch):
@@ -36,14 +43,16 @@ enum PipelineRunOriginPresentation {
                     destinationBranch: destinationBranch,
                     fallback: fallback
                 ),
-                accessibilityLabel: pullRequestAccessibilityLabel(id: id)
+                accessibilityLabel: pullRequestAccessibilityLabel(id: id),
+                badgeStyle: .pullRequest
             )
 
         case .unknown:
             return PipelineRunOriginDisplay(
                 badgeTitle: nil,
                 reference: fallback,
-                accessibilityLabel: nil
+                accessibilityLabel: nil,
+                badgeStyle: nil
             )
         }
     }
@@ -140,12 +149,44 @@ struct PipelineRunOriginBadge: View {
         if let title = display.badgeTitle {
             Text(title)
                 .font(.caption2.weight(.semibold))
+                .foregroundStyle(foregroundStyle)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(.quaternary, in: Capsule())
+                .background(backgroundStyle, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(borderStyle, lineWidth: 1)
+                }
                 .accessibilityLabel(display.accessibilityLabel ?? title)
+        }
+    }
+
+    private var foregroundStyle: Color {
+        switch display.badgeStyle {
+        case .pullRequest:
+            .pink
+        case .branch, .none:
+            .secondary
+        }
+    }
+
+    private var backgroundStyle: Color {
+        switch display.badgeStyle {
+        case .pullRequest:
+            .pink.opacity(0.16)
+        case .branch, .none:
+            .secondary.opacity(0.12)
+        }
+    }
+
+    private var borderStyle: Color {
+        switch display.badgeStyle {
+        case .pullRequest:
+            .pink.opacity(0.42)
+        case .branch, .none:
+            .secondary.opacity(0.22)
         }
     }
 }
