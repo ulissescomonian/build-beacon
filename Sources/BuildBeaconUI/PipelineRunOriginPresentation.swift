@@ -168,7 +168,7 @@ struct PipelineRunOriginBadge: View {
         case .pullRequest:
             .pink
         case .branch, .none:
-            .secondary
+            .teal
         }
     }
 
@@ -177,7 +177,7 @@ struct PipelineRunOriginBadge: View {
         case .pullRequest:
             .pink.opacity(0.16)
         case .branch, .none:
-            .secondary.opacity(0.12)
+            .teal.opacity(0.12)
         }
     }
 
@@ -186,7 +186,7 @@ struct PipelineRunOriginBadge: View {
         case .pullRequest:
             .pink.opacity(0.42)
         case .branch, .none:
-            .secondary.opacity(0.22)
+            .teal.opacity(0.28)
         }
     }
 }
