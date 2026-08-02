@@ -114,11 +114,23 @@ public struct PipelineStep: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
+/// Describes the Bitbucket target that caused a pipeline to run.
+///
+/// This is deliberately independent from optional pull request enrichment: a
+/// pipeline target can identify a pull request even when its details cannot be
+/// loaded.
+public enum PipelineRunOrigin: Hashable, Codable, Sendable {
+    case branch(name: String?)
+    case pullRequest(id: Int?, sourceBranch: String?, destinationBranch: String?)
+    case unknown
+}
+
 public struct PipelineRun: Identifiable, Hashable, Codable, Sendable {
     public let id: PipelineRunID
     public let buildNumber: Int
     public let phase: PipelinePhase
     public let branchName: String?
+    public let origin: PipelineRunOrigin
     public let commitHash: String?
     public let startedAt: Date?
     public let completedAt: Date?
@@ -132,6 +144,7 @@ public struct PipelineRun: Identifiable, Hashable, Codable, Sendable {
         buildNumber: Int,
         phase: PipelinePhase,
         branchName: String? = nil,
+        origin: PipelineRunOrigin = .unknown,
         commitHash: String? = nil,
         startedAt: Date? = nil,
         completedAt: Date? = nil,
@@ -144,6 +157,7 @@ public struct PipelineRun: Identifiable, Hashable, Codable, Sendable {
         self.buildNumber = buildNumber
         self.phase = phase
         self.branchName = branchName
+        self.origin = origin
         self.commitHash = commitHash
         self.startedAt = startedAt
         self.completedAt = completedAt
@@ -151,6 +165,29 @@ public struct PipelineRun: Identifiable, Hashable, Codable, Sendable {
         self.steps = steps
         self.commitContext = commitContext
         self.pullRequest = pullRequest
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, buildNumber, phase, branchName, origin, commitHash, startedAt, completedAt
+        case failureReason, steps, commitContext, pullRequest
+    }
+
+    /// Older local history records predate `origin`; retain them as unknown
+    /// rather than making a harmless UI upgrade discard user history.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(PipelineRunID.self, forKey: .id)
+        buildNumber = try container.decode(Int.self, forKey: .buildNumber)
+        phase = try container.decode(PipelinePhase.self, forKey: .phase)
+        branchName = try container.decodeIfPresent(String.self, forKey: .branchName)
+        origin = try container.decodeIfPresent(PipelineRunOrigin.self, forKey: .origin) ?? .unknown
+        commitHash = try container.decodeIfPresent(String.self, forKey: .commitHash)
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
+        steps = try container.decodeIfPresent([PipelineStep].self, forKey: .steps) ?? []
+        commitContext = try container.decodeIfPresent(PipelineCommitContext.self, forKey: .commitContext)
+        pullRequest = try container.decodeIfPresent(PipelinePullRequestContext.self, forKey: .pullRequest)
     }
 }
 

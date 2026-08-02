@@ -3,6 +3,19 @@ import XCTest
 @testable import BuildBeaconKit
 
 final class PipelineHistoryStoreTests: XCTestCase, @unchecked Sendable {
+    func testPipelineRunDecodesLegacyRecordWithoutOrigin() throws {
+        let original: PipelineRun = self.run(id: "legacy")
+        let encoded = try JSONEncoder().encode(original)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacy.removeValue(forKey: "origin")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacy)
+
+        let decoded = try JSONDecoder().decode(PipelineRun.self, from: legacyData)
+
+        XCTAssertEqual(decoded.id, original.id)
+        XCTAssertEqual(decoded.origin, PipelineRunOrigin.unknown)
+    }
+
     func testRecordsSanitizedEntryAndUpsertsSameRun() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -139,12 +139,66 @@ struct BitbucketPipelineStageDTO: Decodable {
 }
 
 struct BitbucketTargetDTO: Decodable {
+    let type: String?
+    let refType: String?
     let refName: String?
+    let source: BitbucketPipelineTargetReferenceDTO?
+    let destination: BitbucketPipelineTargetReferenceDTO?
+    let pullRequest: BitbucketPipelineTargetPullRequestDTO?
     let commit: BitbucketCommitDTO?
 
     enum CodingKeys: String, CodingKey {
+        case type
+        case refType = "ref_type"
         case refName = "ref_name"
-        case commit
+        case source, destination, commit
+        case pullRequest = "pullrequest"
+    }
+}
+
+struct BitbucketPipelineTargetReferenceDTO: Decodable {
+    let name: String?
+    let branch: BitbucketBranchDTO?
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.singleValueContainer(),
+           let string = try? container.decode(String.self) {
+            name = string
+            branch = nil
+            return
+        }
+
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            name = nil
+            branch = nil
+            return
+        }
+        name = try? container.decode(String.self, forKey: .name)
+        branch = try? container.decode(BitbucketBranchDTO.self, forKey: .branch)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, branch
+    }
+}
+
+struct BitbucketPipelineTargetPullRequestDTO: Decodable {
+    let id: Int?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let integer = try? container.decode(Int.self, forKey: .id) {
+            id = integer
+        } else if let string = try? container.decode(String.self, forKey: .id),
+                  let integer = Int(string.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            id = integer
+        } else {
+            id = nil
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
     }
 }
 

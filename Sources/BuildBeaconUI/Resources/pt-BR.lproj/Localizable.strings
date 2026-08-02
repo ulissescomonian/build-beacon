@@ -239,6 +239,12 @@
 "pipeline.detail.duration.slower.format" = "%@ mais lenta";
 "pipeline.detail.duration.faster.format" = "%@ mais rápida";
 "pipeline.detail.duration.unavailable" = "Duração indisponível";
+"pipeline.origin.badge.branch" = "Branch";
+"pipeline.origin.badge.pullRequest" = "PR";
+"pipeline.origin.badge.pullRequest.format" = "PR nº %lld";
+"pipeline.origin.accessibility.branch" = "Pipeline de branch";
+"pipeline.origin.accessibility.pullRequest" = "Pipeline de pull request";
+"pipeline.origin.accessibility.pullRequest.format" = "Pull request número %lld";
 "Build Beacon notifications are working" = "As notificações do Build Beacon estão funcionando";
 "This is a test notification for the selected pipeline." = "Esta é uma notificação de teste para a pipeline selecionada.";
 "Open Build Beacon" = "Abrir Build Beacon";

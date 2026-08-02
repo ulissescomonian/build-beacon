@@ -1431,3 +1431,37 @@ falhas, com 1 integração Keychain opt-in omitida; build release, build univers
 para `arm64` e `x86_64`, verificação estrita de assinatura, geração e validação
 do DMG, verificação do sidecar SHA-256 e `git diff --check` foram aprovados. A
 revisão independente não encontrou achados bloqueadores após a correção de P1.
+
+### 21.24 Origem explícita da execução e apresentação de pull requests
+
+**Decisão em 2 de agosto de 2026.** `PipelineRun` terá uma origem explícita:
+`branch`, `pullRequest` ou `unknown`. A classificação depende exclusivamente do
+target retornado para a execução: `pipeline_pullrequest_target` identifica uma
+execução de pull request, enquanto `pipeline_ref_target` com `ref_type` igual a
+`branch` identifica uma execução de branch. Um contexto de pull request
+associado ao commit nunca reclassifica uma execução de branch.
+
+Essa separação evita afirmar que uma execução na branch de destino veio de uma
+PR apenas porque o commit possui contexto relacionado. Para uma origem
+`pullRequest`, o número e o trajeto `source → destination` vêm do target da
+pipeline e continuam disponíveis mesmo quando o enriquecimento opcional de PR
+não puder ser consultado. Título, estado e link da PR são enriquecimentos
+opcionais, dependentes de `read:pullrequest:bitbucket`, e sua ausência não muda
+a origem já classificada nem prejudica o monitoramento.
+
+A lista e o cabeçalho do detalhe usarão um badge textual localizado, como
+`PR #482`, para tornar a origem perceptível sem depender apenas de cor ou ícone.
+Execuções de branch recebem uma identificação textual equivalente, e a origem
+`unknown` usa uma apresentação conservadora e acessível. O detalhe apresentará
+os dados completos de origem quando disponíveis. Estados de uma PR, como aberta
+ou mesclada, só serão exibidos quando retornados pelo enriquecimento confiável;
+uma execução normal posterior na branch de destino permanece uma execução de
+branch.
+
+Evidência final: a implementação foi validada com 214 testes executados, sem
+falhas, e 1 integração Keychain opt-in omitida. O build release, bundle
+universal para `arm64` e `x86_64`, verificação estrita de assinatura e
+`Info.plist`, DMG 1.0.0 e sidecar SHA-256 foram aprovados. As localizações en e
+pt-BR, `git diff --check` e a instalação local do novo bundle foram verificados;
+os achados médios e P2 das revisões independentes foram corrigidos e revalidados
+sem regressões.

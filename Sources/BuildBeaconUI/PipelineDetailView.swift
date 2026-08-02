@@ -80,12 +80,27 @@ public struct PipelineDetailView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 14) {
             let state = observation.visualState(refreshIntervalSeconds: refreshIntervalSeconds)
+            let originDisplay = PipelineRunOriginPresentation.display(
+                for: observation.lastKnownRun?.origin ?? .unknown,
+                fallbackBranchName: observation.lastKnownRun?.branchName ?? observation.monitor.id.target.displayName
+            )
             StatusGlyph(symbol: state.symbolName, color: state.tint, label: state.title, size: 30)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(observation.monitor.repositoryName)
-                    .font(.largeTitle.bold())
-                Text("\(observation.monitor.workspaceName) · \(observation.lastKnownRun?.branchName ?? observation.monitor.id.target.displayName)")
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(observation.monitor.repositoryName)
+                        .font(.largeTitle.bold())
+                    if observation.lastKnownRun != nil {
+                        PipelineRunOriginBadge(display: originDisplay)
+                    }
+                }
+                HStack(spacing: 5) {
+                    Text(observation.monitor.workspaceName)
+                    if let reference = originDisplay.reference {
+                        Text("·")
+                        Text(reference)
+                    }
+                }
                     .foregroundStyle(.secondary)
                 if let project = observation.monitor.projectName {
                     Text(project)
