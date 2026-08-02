@@ -10,20 +10,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/version-1.0.0-0A84FF?style=flat-square" alt="Version 1.0.0" /></a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.2"><img src="https://img.shields.io/badge/version-1.0.0-0A84FF?style=flat-square" alt="Version 1.0.0" /></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-1F8A70?style=flat-square" alt="macOS 14 or later" />
   <img src="https://img.shields.io/badge/Universal-arm64%20%2B%20x86__64-6E56CF?style=flat-square" alt="Universal arm64 and x86 64" />
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?style=flat-square" alt="Swift 6.2" />
   <img src="https://img.shields.io/badge/UI-native%20SwiftUI-147EFB?style=flat-square" alt="Native SwiftUI" />
-  <img src="https://img.shields.io/badge/tests-202-34A853?style=flat-square" alt="202 tests" />
+  <img src="https://img.shields.io/badge/tests-214-34A853?style=flat-square" alt="214 tests" />
   <img src="https://img.shields.io/badge/status-Preview-D97706?style=flat-square" alt="Preview status" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-586069?style=flat-square" alt="MIT License" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/download/v1.0.0/Build-Beacon-1.0.0-universal.dmg"><strong>Download Build Beacon 1.0.0 for macOS (.dmg)</strong></a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/download/v1.0.0-preview.2/Build-Beacon-1.0.0-universal.dmg"><strong>Download Build Beacon 1.0.0 for macOS (.dmg)</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0">Release notes &amp; SHA-256 checksum</a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.2">Release notes &amp; SHA-256 checksum</a>
 </p>
 
 > [!IMPORTANT]
@@ -41,7 +41,8 @@ Build Beacon keeps the most useful Bitbucket Pipeline signal where it belongs: i
 - **Project-aware bulk setup.** Filter repositories by Bitbucket project, search, select many, and add them in one atomic operation.
 - **A dashboard that makes recency obvious.** The default view sorts by recent activity, shows relative activity time, marks activity you have not yet seen, and still lets you filter, group, search, pin favorites, and inspect retained local run history.
 - **Useful transitions.** When alerts are enabled and macOS permission is still undetermined, a contextual notification prompt appears after the first monitor is added; local alerts expose system permission, send a test alert, and route to the exact pipeline run that raised the event. Success alerts are optional, disabled by default, and limited to favorites.
-- **Helpful context when available.** Pipeline detail can surface commit and pull-request context returned by Bitbucket, with safe links back to those resources.
+- **Clear run origin.** Dashboard rows and pipeline detail identify whether an execution is a branch run, a pull request, or an unknown source. Pull-request runs show their number and source-to-destination route when Bitbucket provides it.
+- **Helpful context when available.** Pipeline detail can surface commit and pull-request context returned by Bitbucket, with safe links back to those resources. Optional PR details never change the classified origin of a branch run.
 - **Guided least privilege.** The in-app setup explains the exact Bitbucket scoped-token flow and required read permissions.
 - **Local-first credentials.** The API token lives in the macOS Keychain, never in preferences, configuration files, or plaintext fallbacks.
 
@@ -174,7 +175,7 @@ To report a vulnerability privately, see [Security](SECURITY.md). Do not include
 
 ## Install from a release
 
-1. Download the DMG from the [Build Beacon 1.0.0 Preview release](https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0).
+1. Download the DMG from the [Build Beacon 1.0.0 Preview 2 release](https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.2).
 2. Download the matching `.sha256` file and verify it from the download directory:
 
    ```bash
@@ -192,7 +193,7 @@ For Preview builds, macOS may show a provenance or signature warning. Do not dis
 After connection, Build Beacon lives in the menu bar.
 
 - Click the icon to see the overall health of your monitors and the most relevant recent state.
-- Choose **Open Dashboard** for a larger view of monitored pipelines, steps, retained run history, and any available commit or pull-request context. Repeated requests focus the same dashboard window; if it is minimized, it is restored. If you keep the app in the Dock, clicking it follows that same open-or-focus behavior even when the dashboard is closed. The transient Dock icon disappears when you close the workspace; a tile you manually keep remains as a launcher.
+- Choose **Open Dashboard** for a larger view of monitored pipelines, steps, retained run history, and any available commit or pull-request context. A textual badge identifies the run source: a pull-request run shows its number and source-to-destination route, while a normal branch run remains identified as a branch. Repeated requests focus the same dashboard window; if it is minimized, it is restored. If you keep the app in the Dock, clicking it follows that same open-or-focus behavior even when the dashboard is closed. The transient Dock icon disappears when you close the workspace; a tile you manually keep remains as a launcher.
 - The Dashboard opens in recent-activity order. Use its sidebar and view options to filter by state, **Recent**, or project; search repositories; group or sort monitors; and bring favorites to the top. Rows show relative activity time, while the blue **NEW** marker identifies activity you have not acknowledged yet.
 - Use the Settings button in the Dashboard toolbar, **Settings** in the menu bar, or Command-Comma to open the same native Settings window.
 - Use **Settings → Monitoring** to filter by project and search repositories before adding them. Choose **Select All Visible** to add a filtered set at once, choose one shared target (**Latest run** or **Default branch**), and confirm it as one atomic operation. Repositories already monitored cannot be selected again. The Advanced section remains available for a specific branch.
@@ -230,7 +231,7 @@ Packaging creates a local artifact; it does not publish a release, notarize the 
 
 ## Testing
 
-The current suite contains **202 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
+The current suite contains **214 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
 
 ```bash
 swift test

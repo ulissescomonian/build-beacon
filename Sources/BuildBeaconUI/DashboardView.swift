@@ -344,6 +344,19 @@ private struct MonitorDashboardRow: View {
         observation.visualState(refreshIntervalSeconds: refreshIntervalSeconds)
     }
 
+    private var originDisplay: PipelineRunOriginDisplay {
+        guard let run = observation.lastKnownRun else {
+            return PipelineRunOriginPresentation.display(
+                for: .unknown,
+                fallbackBranchName: observation.monitor.id.target.displayName
+            )
+        }
+        return PipelineRunOriginPresentation.display(
+            for: run.origin,
+            fallbackBranchName: run.branchName ?? observation.monitor.id.target.displayName
+        )
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             StatusGlyph(
@@ -374,9 +387,18 @@ private struct MonitorDashboardRow: View {
                 HStack(spacing: 5) {
                     Text(observation.monitor.workspaceName)
                         .lineLimit(1)
-                    Text("·")
-                    Text(observation.lastKnownRun?.branchName ?? observation.monitor.id.target.displayName)
-                        .lineLimit(1)
+                        .layoutPriority(-1)
+                    if observation.lastKnownRun != nil {
+                        Text("·")
+                        PipelineRunOriginBadge(display: originDisplay)
+                    }
+                    if let reference = originDisplay.reference {
+                        Text("·")
+                        Text(reference)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .layoutPriority(1)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

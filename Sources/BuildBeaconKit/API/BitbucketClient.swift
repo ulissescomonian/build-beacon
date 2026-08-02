@@ -5,6 +5,13 @@ private struct CommitContextCacheKey: Hashable, Sendable {
     let workspaceSlug: String
     let repositorySlug: String
     let commitHash: String
+    let pullRequestEnrichment: PullRequestEnrichment
+}
+
+private enum PullRequestEnrichment: Hashable, Sendable {
+    case associatedWithCommit
+    case exactID(Int)
+    case none
 }
 
 private struct CachedCommitContext: Sendable {
@@ -184,6 +191,12 @@ public actor BitbucketClient: BitbucketService {
         )
         let steps = try stepDTOs.map(BitbucketMapper.step)
         let commitHash = pipelineDTO.target?.commit?.hash?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pullRequestEnrichment: PullRequestEnrichment
+        if pipelineDTO.target?.type?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "pipeline_pullrequest_target" {
+            pullRequestEnrichment = pipelineDTO.target?.pullRequest?.id.map(PullRequestEnrichment.exactID) ?? .none
+        } else {
+            pullRequestEnrichment = .associatedWithCommit
+        }
         let context: CachedCommitContext?
         if let commitHash, !commitHash.isEmpty {
             context = try? await cachedCommitContext(
@@ -191,16 +204,30 @@ public actor BitbucketClient: BitbucketService {
                 workspaceSlug: monitor.workspaceSlug,
                 repositorySlug: monitor.repositorySlug,
                 commitHash: commitHash,
+                pullRequestEnrichment: pullRequestEnrichment,
                 credential: credential
             )
         } else {
             context = nil
         }
+        let pullRequest: PipelinePullRequestContext?
+        if let context {
+            pullRequest = BitbucketMapper.pullRequest(context.pullRequest)
+        } else if case let .exactID(id) = pullRequestEnrichment {
+            pullRequest = BitbucketMapper.pullRequest(await optionalPullRequest(
+                workspaceSlug: monitor.workspaceSlug,
+                repositorySlug: monitor.repositorySlug,
+                id: id,
+                credential: credential
+            ))
+        } else {
+            pullRequest = nil
+        }
         return try BitbucketMapper.pipeline(
             pipelineDTO,
             steps: steps,
             commitContext: context.flatMap { BitbucketMapper.commitContext($0.commit) },
-            pullRequest: context.flatMap { BitbucketMapper.pullRequest($0.pullRequest) }
+            pullRequest: pullRequest
         )
     }
 
@@ -209,13 +236,15 @@ public actor BitbucketClient: BitbucketService {
         workspaceSlug: String,
         repositorySlug: String,
         commitHash: String,
+        pullRequestEnrichment: PullRequestEnrichment,
         credential: AccountCredential
     ) async throws -> CachedCommitContext {
         let key = CommitContextCacheKey(
             accountID: accountID,
             workspaceSlug: workspaceSlug,
             repositorySlug: repositorySlug,
-            commitHash: commitHash
+            commitHash: commitHash,
+            pullRequestEnrichment: pullRequestEnrichment
         )
         if let cached = await commitContextCache.value(for: key) {
             return cached
@@ -224,12 +253,25 @@ public actor BitbucketClient: BitbucketService {
             endpoint: Endpoint(path: ["repositories", workspaceSlug, repositorySlug, "commit", commitHash]),
             credential: credential
         )
-        let pullRequest = await optionalPullRequest(
-            workspaceSlug: workspaceSlug,
-            repositorySlug: repositorySlug,
-            commitHash: commitHash,
-            credential: credential
-        )
+        let pullRequest: BitbucketPullRequestDTO?
+        switch pullRequestEnrichment {
+        case let .exactID(id):
+            pullRequest = await optionalPullRequest(
+                workspaceSlug: workspaceSlug,
+                repositorySlug: repositorySlug,
+                id: id,
+                credential: credential
+            )
+        case .associatedWithCommit:
+            pullRequest = await optionalPullRequest(
+                workspaceSlug: workspaceSlug,
+                repositorySlug: repositorySlug,
+                commitHash: commitHash,
+                credential: credential
+            )
+        case .none:
+            pullRequest = nil
+        }
         let context = CachedCommitContext(commit: commit, pullRequest: pullRequest)
         await commitContextCache.insert(context, for: key)
         return context
@@ -260,6 +302,25 @@ public actor BitbucketClient: BitbucketService {
             default:
                 return nil
             }
+        } catch {
+            return nil
+        }
+    }
+
+    private func optionalPullRequest(
+        workspaceSlug: String,
+        repositorySlug: String,
+        id: Int,
+        credential: AccountCredential
+    ) async -> BitbucketPullRequestDTO? {
+        do {
+            let pullRequest: BitbucketPullRequestDTO = try await get(
+                endpoint: Endpoint(
+                    path: ["repositories", workspaceSlug, repositorySlug, "pullrequests", String(id)]
+                ),
+                credential: credential
+            )
+            return pullRequest
         } catch {
             return nil
         }

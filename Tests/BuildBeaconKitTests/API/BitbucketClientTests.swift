@@ -189,6 +189,83 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(requests[3].url?.path, "/2.0/repositories/team/app/commit/abcdef/pullrequests")
     }
 
+    func testPipelineMapperClassifiesOfficialStringPullRequestTargetAndAcceptsIntegerID() throws {
+        let dto = try JSONDecoder().decode(
+            BitbucketPipelineDTO.self,
+            from: Data(#"{"uuid":"p","build_number":1,"target":{"type":"pipeline_pullrequest_target","pullrequest":{"id":42},"source":" feature/source ","destination":" develop "}}"#.utf8)
+        )
+
+        let pipeline = try BitbucketMapper.pipeline(dto, steps: [])
+
+        XCTAssertEqual(pipeline.origin, .pullRequest(id: 42, sourceBranch: "feature/source", destinationBranch: "develop"))
+        XCTAssertEqual(pipeline.branchName, "feature/source")
+    }
+
+    func testPipelineMapperToleratesObjectPullRequestTargetAndAcceptsStringID() throws {
+        let dto = try JSONDecoder().decode(
+            BitbucketPipelineDTO.self,
+            from: Data(#"{"uuid":"p","build_number":1,"target":{"type":"pipeline_pullrequest_target","pullrequest":{"id":"42"},"source":{"name":"feature/source"},"destination":{"branch":{"name":"develop"}}}}"#.utf8)
+        )
+
+        let pipeline = try BitbucketMapper.pipeline(dto, steps: [])
+
+        XCTAssertEqual(pipeline.origin, .pullRequest(id: 42, sourceBranch: "feature/source", destinationBranch: "develop"))
+    }
+
+    func testPipelineMapperClassifiesBranchTargetAndLeavesOtherTargetsUnknown() throws {
+        let decoder = JSONDecoder()
+        let branch = try decoder.decode(
+            BitbucketPipelineDTO.self,
+            from: Data(#"{"uuid":"branch","build_number":1,"target":{"type":"pipeline_ref_target","ref_type":"branch","ref_name":"main"}}"#.utf8)
+        )
+        let tag = try decoder.decode(
+            BitbucketPipelineDTO.self,
+            from: Data(#"{"uuid":"tag","build_number":1,"target":{"type":"pipeline_ref_target","ref_type":"tag","ref_name":"v1.0.0"}}"#.utf8)
+        )
+
+        XCTAssertEqual(try BitbucketMapper.pipeline(branch, steps: []).origin, .branch(name: "main"))
+        XCTAssertEqual(try BitbucketMapper.pipeline(tag, steps: []).origin, .unknown)
+    }
+
+    func testLatestPullRequestPipelineFetchesExactTargetPRAndKeepsOriginWhenEnrichmentFails() async throws {
+        let accountID = AccountID(rawValue: "account")
+        let store = InMemoryCredentialStore(credential: .init(email: "a@b.com", token: "token"), accountID: accountID)
+        let pipeline = #"{"values":[{"uuid":"p","build_number":1,"state":{"name":"COMPLETED","result":{"name":"SUCCESSFUL"}},"target":{"type":"pipeline_pullrequest_target","pullrequest":{"id":"17"},"source":"feature/a","destination":"dev","commit":{"hash":"abcdef"}}}]}"#
+        let transport = SequencedTransport(responses: [
+            .json(pipeline), .json(#"{"values":[]}"#),
+            .json(#"{"hash":"abcdef","message":"PR commit"}"#), .status(404),
+        ])
+        let client = makeClient(store: store, transport: transport)
+
+        let fetchedPipeline = try await client.latestPipeline(for: monitor(accountID: accountID))
+        let mapped = try XCTUnwrap(fetchedPipeline)
+
+        XCTAssertEqual(mapped.origin, .pullRequest(id: 17, sourceBranch: "feature/a", destinationBranch: "dev"))
+        XCTAssertNil(mapped.pullRequest)
+        let requests = await transport.requests
+        XCTAssertEqual(requests[3].url?.path, "/2.0/repositories/team/app/pullrequests/17")
+    }
+
+    func testLatestPullRequestPipelineWithoutIDDoesNotUseCommitAssociationFallback() async throws {
+        let accountID = AccountID(rawValue: "account")
+        let store = InMemoryCredentialStore(credential: .init(email: "a@b.com", token: "token"), accountID: accountID)
+        let pipeline = #"{"values":[{"uuid":"p","build_number":1,"state":{"name":"COMPLETED","result":{"name":"SUCCESSFUL"}},"target":{"type":"pipeline_pullrequest_target","pullrequest":{"id":"not-an-id"},"source":"feature/a","destination":"dev","commit":{"hash":"abcdef"}}}]}"#
+        let transport = SequencedTransport(responses: [
+            .json(pipeline), .json(#"{"values":[]}"#), .json(#"{"hash":"abcdef","message":"PR commit"}"#),
+        ])
+        let client = makeClient(store: store, transport: transport)
+
+        let fetchedPipeline = try await client.latestPipeline(for: monitor(accountID: accountID))
+        let pipelineRun = try XCTUnwrap(fetchedPipeline)
+
+        XCTAssertEqual(pipelineRun.origin, .pullRequest(id: nil, sourceBranch: "feature/a", destinationBranch: "dev"))
+        XCTAssertEqual(pipelineRun.commitContext?.message, "PR commit")
+        XCTAssertNil(pipelineRun.pullRequest)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertFalse(requests.contains { $0.url?.path.contains("/commit/abcdef/pullrequests") == true })
+    }
+
     func testLatestPipelineSuppressesOptionalPullRequestFailuresAndUnsafeLinks() async throws {
         for response in [
             HTTPResponse.status(401), .status(403), .status(404), .status(202), .json("not json"),

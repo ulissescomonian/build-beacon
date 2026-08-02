@@ -239,6 +239,12 @@
 "pipeline.detail.duration.slower.format" = "%@ slower";
 "pipeline.detail.duration.faster.format" = "%@ faster";
 "pipeline.detail.duration.unavailable" = "Duration unavailable";
+"pipeline.origin.badge.branch" = "Branch";
+"pipeline.origin.badge.pullRequest" = "PR";
+"pipeline.origin.badge.pullRequest.format" = "PR #%lld";
+"pipeline.origin.accessibility.branch" = "Branch pipeline";
+"pipeline.origin.accessibility.pullRequest" = "Pull request pipeline";
+"pipeline.origin.accessibility.pullRequest.format" = "Pull request number %lld";
 "Build Beacon notifications are working" = "Build Beacon notifications are working";
 "This is a test notification for the selected pipeline." = "This is a test notification for the selected pipeline.";
 "Open Build Beacon" = "Open Build Beacon";

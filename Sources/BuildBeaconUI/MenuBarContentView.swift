@@ -381,6 +381,19 @@ private struct MonitorCompactRow: View {
         observation.visualState(refreshIntervalSeconds: refreshIntervalSeconds)
     }
 
+    private var originDisplay: PipelineRunOriginDisplay {
+        guard let run = observation.lastKnownRun else {
+            return PipelineRunOriginPresentation.display(
+                for: .unknown,
+                fallbackBranchName: observation.monitor.id.target.displayName
+            )
+        }
+        return PipelineRunOriginPresentation.display(
+            for: run.origin,
+            fallbackBranchName: run.branchName ?? observation.monitor.id.target.displayName
+        )
+    }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
@@ -394,10 +407,20 @@ private struct MonitorCompactRow: View {
                     Text(observation.monitor.repositoryName)
                         .font(.body.weight(.medium))
                         .lineLimit(1)
-                    Text(observation.lastKnownRun?.branchName ?? observation.monitor.id.target.displayName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if observation.lastKnownRun != nil {
+                            PipelineRunOriginBadge(display: originDisplay)
+                        }
+                        if let reference = originDisplay.reference {
+                            Text(reference)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .layoutPriority(1)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
 
                 Spacer()

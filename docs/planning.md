@@ -2005,3 +2005,56 @@ Validações do incremento:
 | `git diff --check` | aprovado |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.24 Incremento entregue: origem de execução e identificação de pull request
+
+Escopo e ownership:
+
+- domínio e API: adicionar a origem explícita `branch`, `pullRequest` ou
+  `unknown` a `PipelineRun`; classificar somente
+  `pipeline_pullrequest_target` como PR e somente `pipeline_ref_target` com
+  `ref_type` `branch` como branch;
+- contrato de apresentação: para PR, preservar o número e o trajeto
+  `source → destination` recebidos no target; título, estado e link seguem
+  como enriquecimento opcional e nunca mudam a classificação da execução;
+- UI e localização: apresentar um badge textual localizado de origem na lista
+  e no cabeçalho do detalhe, com fallback acessível e seguro para `unknown`;
+- testes: cobrir a classificação dos targets, o caso de contexto de PR no
+  commit sem reclassificar uma execução de branch, a apresentação e os
+  fallbacks; nenhuma fixture contém dados reais;
+- documentação e integração: manter este plano, a decisão e o README coerentes
+  com o comportamento entregue, sem alterar a contagem pública de testes antes
+  dos gates.
+
+Critérios de aceite verificados:
+
+- uma pipeline com `pipeline_pullrequest_target` mostra `PR #número` e
+  `source → destination` quando o target fornecer esses dados;
+- uma pipeline de `pipeline_ref_target` com `ref_type` `branch` permanece
+  explicitamente identificada como branch, mesmo quando o commit tem contexto
+  de PR associado;
+- target ausente, novo ou incompatível resulta em origem `unknown`, sem inferir
+  PR, branch ou merge;
+- título, estado e link de PR ausentes por escopo, erro ou payload incompatível
+  não ocultam nem reclassificam a origem derivada do target;
+- lista, detalhe, VoiceOver e as localizações en e pt-BR comunicam a origem sem
+  depender somente de cor ou ícone;
+- estados de PR são mostrados apenas como enriquecimento confiável, e uma
+  execução posterior na branch de destino não recebe indevidamente o rótulo de
+  PR mesclada.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| testes focados de domínio, API e UI | classificação, apresentação, fallback e acessibilidade determinísticos aprovados |
+| `swift test --quiet` | 214 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | build release aprovado |
+| bundle universal e assinatura | `arm64` e `x86_64`, `codesign --verify --deep --strict` e `Info.plist` aprovados |
+| DMG e sidecar SHA-256 | DMG 1.0.0 verificado e sidecar aprovado |
+| revisões independentes | achados médios e P2 corrigidos e revalidados sem regressões |
+| localizações | en e pt-BR aprovados |
+| instalação local | bundle anterior substituído com backup recuperável; novo bundle iniciado e confirmado |
+| `git diff --check` | aprovado |
+
+Estado: entregue e aprovado para empacotamento Preview.

@@ -58,7 +58,8 @@ enum BitbucketMapper {
             id: PipelineRunID(rawValue: uuid),
             buildNumber: buildNumber,
             phase: resolvedPipelinePhase(dto.state, steps: steps),
-            branchName: nonempty(dto.target?.refName),
+            branchName: branchName(for: dto.target),
+            origin: pipelineOrigin(for: dto.target),
             commitHash: nonempty(dto.target?.commit?.hash),
             startedAt: dto.createdOn,
             completedAt: dto.completedOn,
@@ -67,6 +68,30 @@ enum BitbucketMapper {
             commitContext: commitContext,
             pullRequest: pullRequest
         )
+    }
+
+    private static func pipelineOrigin(for target: BitbucketTargetDTO?) -> PipelineRunOrigin {
+        switch target?.type?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "pipeline_pullrequest_target":
+            return .pullRequest(
+                id: target?.pullRequest?.id,
+                sourceBranch: target.flatMap { nonempty($0.source?.branch?.name) ?? nonempty($0.source?.name) },
+                destinationBranch: target.flatMap { nonempty($0.destination?.branch?.name) ?? nonempty($0.destination?.name) }
+            )
+        case "pipeline_ref_target":
+            guard target?.refType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "branch" else {
+                return .unknown
+            }
+            return .branch(name: target.flatMap { nonempty($0.refName) })
+        default:
+            return .unknown
+        }
+    }
+
+    private static func branchName(for target: BitbucketTargetDTO?) -> String? {
+        nonempty(target?.refName)
+            ?? nonempty(target?.source?.branch?.name)
+            ?? nonempty(target?.source?.name)
     }
 
     static func commitContext(_ dto: BitbucketCommitDetailsDTO) -> PipelineCommitContext? {
