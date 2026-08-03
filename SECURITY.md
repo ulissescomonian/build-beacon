@@ -27,7 +27,7 @@ Replace sensitive values with clearly marked placeholders. A synthetic reproduct
 
 ## Security scope
 
-Build Beacon is a native macOS app that observes Bitbucket pipeline information. The product boundary is read-only: it must not create, modify, or delete Bitbucket resources. Security reports are especially useful for issues involving:
+Build Beacon is a native macOS app that observes Bitbucket pipeline information. Monitoring is read-only by default. Its only approved remote mutation is a foreground, per-monitor opt-in **Approve and merge** action for an eligible pull request; it must not create, modify, or delete any other Bitbucket resource. Security reports are especially useful for issues involving:
 
 - Authentication, token handling, or Keychain access.
 - Data exposure through logs, alerts, diagnostics, or user interface state.
@@ -39,7 +39,7 @@ The app is designed to keep credentials in the macOS Keychain and to minimize th
 
 ## Local data and notifications
 
-Build Beacon stores the API token only in the macOS Keychain. Its local application-support data is limited to non-secret configuration, a notification and approval-reminder deduplication ledger, and—when the user enables it—bounded pipeline history. These files are retained only as long as needed for their feature, use user-only filesystem permissions, and are written atomically. History and ledger records contain only the minimum opaque identifiers, state transitions, and timestamps needed for local behavior; they do not contain API payloads, commit text, branches, steps, external URLs, headers, or credentials.
+Build Beacon stores the monitoring token and the separate Action Mode token only in distinct macOS Keychain items. The write credential has exactly `read:user:bitbucket`, `read:pullrequest:bitbucket` and `write:pullrequest:bitbucket`; the user scope validates its identity before mutation. Local application-support data is limited to non-secret configuration, including a per-monitor Action Mode flag that defaults to false, a notification and approval-reminder deduplication ledger, and—when the user enables it—bounded pipeline history. This first Action Mode version persists no action audit. These files are retained only as long as needed for their feature, use user-only filesystem permissions, and are written atomically. History and ledger records contain only the minimum opaque identifiers, state transitions, and timestamps needed for local behavior; they do not contain API payloads, commit text, branches, steps, external URLs, headers, or credentials.
 
 Notification and history retention are bounded. Approval reminders are opt-in and deliver once after a 10- or 15-minute local delay; removing a monitor, resolving its approval, or disconnecting an account removes related local records and pending notifications. Explicit production-monitor configuration contains no secret and does not authorize a write action. Changes to schemas or corrupted files must preserve recoverability: migration code must not silently overwrite unknown future data, and backups or quarantined files must receive the same restrictive permissions as their source data.
 
@@ -47,13 +47,17 @@ Notifications can reveal pipeline context such as a repository or build state on
 
 ## Network access and links
 
-Network access is limited to the read-only Bitbucket API contract. Requests use TLS and an ephemeral session configuration; cookies, credential storage, and persistent URL caching are not used. Authorization is created only for the request and must never be recorded in logs, diagnostics, or local files.
+Network access is limited to the read-only monitoring contract plus the isolated pull-request approve and merge endpoints. Requests use TLS and an ephemeral session configuration; cookies, credential storage, and persistent URL caching are not used. Authorization is created only for the request and must never be recorded in logs, diagnostics, or local files.
 
 Links opened by the app must be constructed or validated locally. External links, including an approval center action that opens a build, are restricted to HTTPS and the approved Bitbucket web host, without embedded credentials, unexpected ports, or sensitive query data. A link that can bypass this allowlist, leak data in a query string, or open an arbitrary destination should be reported privately.
 
 ## Permissions and future scope
 
-The required token permissions are read-only. Pull request context is optional and, if enabled, must use only the additional read-only pull request permission. Build Beacon must not add remote write actions, including through notifications, deep links, or background tasks. Any proposal to expand privileges or introduce a remote mutation requires a new threat model, explicit product approval, and a coordinated security review before implementation.
+The monitoring token permissions remain read-only. Pull request context is optional for observation alone, but `read:pullrequest:bitbucket` becomes required on that token when Action Mode is used. Action Mode requires a second token with exactly `read:user:bitbucket`, `read:pullrequest:bitbucket` and `write:pullrequest:bitbucket`, plus explicit allowlisting for the monitor and confirmation for every action.
+
+Before either POST, Build Beacon uses the monitoring token to revalidate the exact run, commit and `succeeded` result, and the Action Mode token to revalidate that the PR is `OPEN`, not a draft, has the confirmed source and destination branches, and still has the confirmed source HEAD. Approval and merge are each attempted once without automatic retry, with a complete fresh preflight between them. A `200` or `202` response is not presented as success until task status where applicable and a final GET confirms `MERGED`. Every timeout, `5xx`, malformed response or failed verification after a POST produces an unknown outcome, never a blind retry. The UI publishes the actual revalidation, approval, merge and verification phase.
+
+Polling, background work, notifications, reminders, relaunches and deep links cannot initiate or continue a write action. They may only open the relevant UI. Build Beacon does not approve pipeline steps, run background automerge, or automatically undo a confirmed approval if the merge does not complete. Any proposal for another mutation, broader scope or persisted action audit requires a new threat model, explicit product approval and coordinated security review.
 
 ## What happens next
 

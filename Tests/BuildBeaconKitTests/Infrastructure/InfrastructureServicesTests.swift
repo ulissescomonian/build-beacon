@@ -368,6 +368,52 @@ final class InfrastructureServicesTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(deleted)
     }
 
+    func testPullRequestActionKeychainUsesAnIndependentService() {
+        XCTAssertEqual(
+            KeychainPullRequestActionCredentialStore.defaultService,
+            "com.epyczones.buildbeacon.bitbucket-pr-actions-token"
+        )
+        XCTAssertNotEqual(
+            KeychainPullRequestActionCredentialStore.defaultService,
+            "com.epyczones.buildbeacon.bitbucket-api-token"
+        )
+    }
+
+    func testPullRequestActionKeychainLifecycleIsIsolatedWhenIntegrationIsEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["BUILD_BEACON_KEYCHAIN_INTEGRATION"] == "1" else {
+            throw XCTSkip("Set BUILD_BEACON_KEYCHAIN_INTEGRATION=1 to exercise the real login Keychain")
+        }
+        let suffix = UUID().uuidString
+        let accountID = AccountID(rawValue: "{account}")
+        let monitoringStore = KeychainCredentialStore(service: "com.buildbeacon.tests.monitoring.\(suffix)")
+        let actionStore = KeychainPullRequestActionCredentialStore(
+            service: "com.buildbeacon.tests.actions.\(suffix)"
+        )
+        try? await monitoringStore.delete(accountID: accountID)
+        try? await actionStore.delete()
+
+        try await monitoringStore.save(
+            AccountCredential(email: "monitor@example.com", token: "read-only"),
+            accountID: accountID
+        )
+        try await actionStore.save(PullRequestActionCredentialRecord(
+            credential: AccountCredential(email: "actions@example.com", token: "write-pr"),
+            expectedAccountID: accountID
+        ))
+
+        let action = try await actionStore.load()
+        XCTAssertEqual(action?.expectedAccountID, accountID)
+        XCTAssertEqual(action?.credential.email, "actions@example.com")
+        XCTAssertEqual(action?.credential.token, "write-pr")
+
+        try await actionStore.delete()
+        let deletedAction = try await actionStore.load()
+        let preservedMonitoringCredential = try await monitoringStore.load(accountID: accountID)
+        XCTAssertNil(deletedAction)
+        XCTAssertEqual(preservedMonitoringCredential?.token, "read-only")
+        try await monitoringStore.delete(accountID: accountID)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("build-beacon-infrastructure-tests-\(UUID().uuidString)", isDirectory: true)

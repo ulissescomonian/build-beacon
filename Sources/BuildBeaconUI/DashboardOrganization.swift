@@ -123,21 +123,41 @@ enum DashboardOrganization {
     /// for both the approval items themselves and every remaining repository.
     static func prioritizedSections(
         for observations: [MonitorObservation],
-        grouping: MonitorPresentationPreferences.Grouping
+        grouping: MonitorPresentationPreferences.Grouping,
+        pullRequestActionsConfigured: Bool = true
     ) -> [DashboardSection] {
         let approvals = observations.filter { $0.lastKnownRun?.phase == .awaitingApproval }
-        guard !approvals.isEmpty else {
-            return sections(for: observations, grouping: grouping)
+        let approvalIDs = Set(approvals.map(\.monitor.id))
+        let mergeReady = observations.filter {
+            guard pullRequestActionsConfigured else { return false }
+            guard !approvalIDs.contains($0.monitor.id) else { return false }
+            if case .eligible = PullRequestMergeEligibilityEvaluator.evaluate($0) { return true }
+            return false
         }
+        let priorityIDs = approvalIDs.union(mergeReady.map(\.monitor.id))
+        let remaining = observations.filter { !priorityIDs.contains($0.monitor.id) }
 
-        let remaining = observations.filter { $0.lastKnownRun?.phase != .awaitingApproval }
-        return [
+        var prioritySections: [DashboardSection] = []
+        if !approvals.isEmpty {
+            prioritySections.append(
             DashboardSection(
                 id: "approval-required",
                 title: String(localized: "Approval required", bundle: .module),
                 observations: approvals
-            ),
-        ] + sections(for: remaining, grouping: grouping)
+            ))
+        }
+        if !mergeReady.isEmpty {
+            prioritySections.append(
+                DashboardSection(
+                    id: "ready-to-merge",
+                    title: String(localized: "Ready to Merge", bundle: .module),
+                    observations: mergeReady
+                ))
+        }
+        guard !prioritySections.isEmpty else {
+            return sections(for: observations, grouping: grouping)
+        }
+        return prioritySections + sections(for: remaining, grouping: grouping)
     }
 
     private static func matches(

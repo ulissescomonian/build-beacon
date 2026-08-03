@@ -919,6 +919,132 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(runtime.reconciledApprovalReminders.last?.1, .tenMinutes)
     }
 
+    func testPullRequestActionConfigurationClearsTokenBufferAfterUse() async {
+        let (_, runtime, _) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: false)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        model.pullRequestActionEmail = "actions@example.com"
+        model.pullRequestActionToken = "secret-token"
+
+        let configured = await model.configurePullRequestActions()
+        let configuredEmail = await actions.configuredEmail()
+
+        XCTAssertTrue(configured)
+        XCTAssertTrue(model.pullRequestActionIsConfigured)
+        XCTAssertTrue(model.pullRequestActionToken.isEmpty)
+        XCTAssertEqual(configuredEmail, "actions@example.com")
+    }
+
+    func testPullRequestActionPreflightIsSingleFlightAndMergeRefreshesTerminalState() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        let observation = pullRequestObservation(monitor: monitor, runID: "run-1", buildNumber: 10, commitHash: "abc")
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: observation)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+
+        let first = model.beginPullRequestAction(for: observation)
+        let duplicate = model.beginPullRequestAction(for: observation)
+        await first?.value
+
+        XCTAssertNil(duplicate)
+        guard case let .confirmation(preflight) = model.pullRequestActionSheetState else {
+            return XCTFail("Expected confirmation")
+        }
+        XCTAssertEqual(preflight.target.runID, PipelineRunID(rawValue: "run-1"))
+        await model.confirmPullRequestAction(strategy: .mergeCommit)?.value
+        let approveCalls = await actions.approveCallCount()
+
+        XCTAssertEqual(approveCalls, 1)
+        XCTAssertEqual(runtime.refreshCalls, 2)
+        XCTAssertEqual(model.pullRequestActionSheetState, .completed(outcome: .merged(mergeCommitHash: "merged")))
+    }
+
+    func testPullRequestActionConfirmationRejectsLocallyStaleRunBeforeMutation() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        let original = pullRequestObservation(monitor: monitor, runID: "run-1", buildNumber: 10, commitHash: "abc")
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: original)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+        await model.beginPullRequestAction(for: original)?.value
+
+        let newer = pullRequestObservation(monitor: monitor, runID: "run-2", buildNumber: 11, commitHash: "def")
+        runtime.refreshSnapshot = snapshot(observation: newer)
+        await model.refresh()
+        let confirmation = model.confirmPullRequestAction(strategy: .mergeCommit)
+        let approveCalls = await actions.approveCallCount()
+
+        XCTAssertNil(confirmation)
+        XCTAssertEqual(approveCalls, 0)
+        XCTAssertEqual(model.pullRequestActionSheetState, .failed(error: .staleRun))
+    }
+
+    func testPullRequestActionCancellationBeforeConfirmationIsSafe() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        let observation = pullRequestObservation(monitor: monitor, runID: "run-safe-cancel", buildNumber: 12, commitHash: "abc")
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: observation)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+        await model.beginPullRequestAction(for: observation)?.value
+
+        model.cancelPullRequestAction()
+        let approveCalls = await actions.approveCallCount()
+
+        XCTAssertEqual(model.pullRequestActionSheetState, .hidden)
+        XCTAssertEqual(approveCalls, 0)
+    }
+
+    func testPullRequestActionCancellationAfterConfirmationIsOutcomeUnknown() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        let observation = pullRequestObservation(monitor: monitor, runID: "run-unknown-cancel", buildNumber: 13, commitHash: "abc")
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: observation)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+        await model.beginPullRequestAction(for: observation)?.value
+
+        let action = model.confirmPullRequestAction(strategy: .mergeCommit)
+        model.cancelPullRequestAction()
+        await action?.value
+
+        XCTAssertEqual(model.pullRequestActionSheetState, .failed(error: .outcomeUnknown))
+    }
+
+    func testPullRequestActionsTogglePersistsPerMonitor() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "actions-toggle", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+
+        await model.setPullRequestActionsAllowed(true, for: monitor.id)
+
+        XCTAssertTrue(model.configuration.monitors[0].allowsPullRequestActions)
+        XCTAssertTrue(runtime.configuration.monitors[0].allowsPullRequestActions)
+    }
+
     func testDisablingGlobalNotificationsCancelsApprovalRemindersImmediately() async {
         let (model, runtime, workspace) = makeConnectedModel()
         let monitor = monitor(id: "reminder-global", in: workspace, accountID: model.configuration.account!.id)
@@ -1423,6 +1549,67 @@ final class AppModelTests: XCTestCase {
         )
     }
 
+    private func pullRequestMonitor(
+        in workspace: WorkspaceInfo,
+        accountID: AccountID
+    ) -> MonitorConfiguration {
+        MonitorConfiguration(
+            id: MonitorID(
+                accountID: accountID,
+                workspaceID: workspace.id,
+                repositoryID: RepositoryID(rawValue: "pull-request-actions"),
+                target: .repositoryLatest
+            ),
+            workspaceSlug: workspace.slug,
+            workspaceName: workspace.name,
+            repositorySlug: "pull-request-actions",
+            repositoryName: "Pull Request Actions",
+            isProduction: true,
+            allowsPullRequestActions: true
+        )
+    }
+
+    private func pullRequestObservation(
+        monitor: MonitorConfiguration,
+        runID: String,
+        buildNumber: Int,
+        commitHash: String
+    ) -> MonitorObservation {
+        MonitorObservation(
+            monitor: monitor,
+            lastKnownRun: PipelineRun(
+                id: PipelineRunID(rawValue: runID),
+                buildNumber: buildNumber,
+                phase: .succeeded,
+                origin: .pullRequest(
+                    id: 42,
+                    sourceBranch: "feature/actions",
+                    destinationBranch: "main"
+                ),
+                commitHash: commitHash,
+                pullRequest: PipelinePullRequestContext(
+                    id: 42,
+                    title: "Merge actions",
+                    state: "OPEN",
+                    sourceCommitHash: commitHash,
+                    availableMergeStrategies: [.mergeCommit],
+                    defaultMergeStrategy: .mergeCommit
+                )
+            )
+        )
+    }
+
+    private func snapshot(observation: MonitorObservation) -> MonitoringSnapshot {
+        MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: .now,
+            completedAt: .now,
+            reason: .manual,
+            observations: [observation.monitor.id: observation],
+            aggregateState: .healthy
+        )
+    }
+
     private func settleActivityPersistence() async {
         for _ in 0..<4 {
             await Task.yield()
@@ -1692,4 +1879,56 @@ private final class RuntimeStub: BuildBeaconRuntime {
     func openBitbucketURL(_ url: URL) throws { openedBitbucketURLs.append(url) }
     func launchAtLoginEnabled() -> Bool { false }
     func setLaunchAtLogin(_ enabled: Bool) async throws { }
+}
+
+private actor PullRequestActionServiceStub: PullRequestActionServicing {
+    private var configured: Bool
+    private var email: String?
+    private var approveCalls = 0
+    var outcome: PullRequestMergeOutcome = .merged(mergeCommitHash: "merged")
+    var preflightError: PullRequestActionError?
+    var actionError: PullRequestActionError?
+
+    init(configured: Bool) {
+        self.configured = configured
+    }
+
+    var isConfigured: Bool { configured }
+
+    func configure(_ credential: AccountCredential, expectedAccountID: AccountID) async throws {
+        guard !credential.email.isEmpty, !credential.token.isEmpty else {
+            throw PullRequestActionError.invalidCredentials
+        }
+        email = credential.email
+        configured = true
+    }
+
+    func disconnectPullRequestActions() async throws {
+        configured = false
+    }
+
+    func preflight(_ target: PullRequestActionTarget) async throws -> PullRequestMergePreflight {
+        guard configured else { throw PullRequestActionError.notConfigured }
+        if let preflightError { throw preflightError }
+        return PullRequestMergePreflight(
+            target: target,
+            title: "Merge actions",
+            availableStrategies: [.mergeCommit],
+            defaultStrategy: .mergeCommit,
+            closeSourceBranch: false,
+            alreadyApproved: false
+        )
+    }
+
+    func approveAndMerge(
+        _ preflight: PullRequestMergePreflight,
+        strategy: PullRequestMergeStrategy
+    ) async throws -> PullRequestMergeOutcome {
+        approveCalls += 1
+        if let actionError { throw actionError }
+        return outcome
+    }
+
+    func configuredEmail() -> String? { email }
+    func approveCallCount() -> Int { approveCalls }
 }

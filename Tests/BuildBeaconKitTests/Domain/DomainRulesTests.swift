@@ -31,6 +31,7 @@ final class DomainRulesTests: XCTestCase {
             ("PENDING", nil, true, .awaitingApproval),
             ("READY", nil, false, .queued),
             ("IN_PROGRESS", nil, true, .running),
+            ("HALTED", nil, false, .awaitingApproval),
             ("COMPLETED", "SUCCESSFUL", true, .succeeded),
             ("COMPLETED", "FAILED", true, .failed),
             ("COMPLETED", "NOT_RUN", true, .stopped),

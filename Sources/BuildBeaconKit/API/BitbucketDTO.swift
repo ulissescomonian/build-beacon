@@ -5,7 +5,7 @@ struct BitbucketPage<Value: Decodable>: Decodable {
     let next: String?
 }
 
-struct BitbucketUserDTO: Decodable {
+struct BitbucketUserDTO: Decodable, Sendable {
     let uuid: String?
     let accountID: String?
     let displayName: String?
@@ -20,7 +20,7 @@ struct BitbucketUserDTO: Decodable {
     }
 }
 
-struct BitbucketNestedUserDTO: Decodable {
+struct BitbucketNestedUserDTO: Decodable, Sendable {
     let displayName: String?
 
     enum CodingKeys: String, CodingKey {
@@ -211,7 +211,7 @@ struct BitbucketPipelineTargetPullRequestDTO: Decodable {
     }
 }
 
-struct BitbucketCommitDTO: Decodable {
+struct BitbucketCommitDTO: Decodable, Sendable {
     let hash: String?
 }
 
@@ -255,6 +255,74 @@ struct BitbucketPullRequestDTO: Decodable, Sendable {
     let state: String?
     let author: BitbucketUserDTO?
     let links: BitbucketLinksDTO?
+    let source: BitbucketPullRequestEndpointDTO?
+    let destination: BitbucketPullRequestEndpointDTO?
+    let participants: [BitbucketPullRequestParticipantDTO]?
+    let draft: Bool?
+    let closeSourceBranch: Bool?
+    let mergeCommit: BitbucketCommitDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, state, author, links, source, destination, participants, draft
+        case closeSourceBranch = "close_source_branch"
+        case mergeCommit = "merge_commit"
+    }
+}
+
+struct BitbucketPullRequestEndpointDTO: Decodable, Sendable {
+    let repository: BitbucketPullRequestRepositoryDTO?
+    let branch: BitbucketPullRequestBranchDTO?
+    let commit: BitbucketCommitDTO?
+}
+
+struct BitbucketPullRequestRepositoryDTO: Decodable, Sendable {
+    let uuid: String?
+    let fullName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case uuid
+        case fullName = "full_name"
+    }
+}
+
+struct BitbucketPullRequestBranchDTO: Decodable, Sendable {
+    let name: String?
+    let mergeStrategies: [String]?
+    let defaultMergeStrategy: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case mergeStrategies = "merge_strategies"
+        case defaultMergeStrategy = "default_merge_strategy"
+    }
+}
+
+struct BitbucketPullRequestParticipantDTO: Decodable, Sendable {
+    let user: BitbucketUserDTO?
+    let approved: Bool?
+    let state: String?
+}
+
+struct BitbucketMergeTaskDTO: Decodable, Sendable {
+    let taskStatus: String?
+    let mergeResult: BitbucketPullRequestDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case taskStatus = "task_status"
+        case mergeResult = "merge_result"
+    }
+}
+
+struct BitbucketPullRequestMergeBody: Encodable, Sendable {
+    let type = "pullrequest"
+    let mergeStrategy: String
+    let closeSourceBranch: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case mergeStrategy = "merge_strategy"
+        case closeSourceBranch = "close_source_branch"
+    }
 }
 
 struct BitbucketLinksDTO: Decodable, Sendable {

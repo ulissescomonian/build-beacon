@@ -113,12 +113,22 @@ enum BitbucketMapper {
         let author = nonempty(dto.author?.user?.displayName)
             ?? nonempty(dto.author?.displayName)
             ?? nonempty(dto.author?.nickname)
+        let availableStrategies = dto.destination?.branch?.mergeStrategies?
+            .compactMap { PullRequestMergeStrategy(rawValue: $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
+            ?? []
+        let defaultStrategy = dto.destination?.branch?.defaultMergeStrategy
+            .flatMap { PullRequestMergeStrategy(rawValue: $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
         return PipelinePullRequestContext(
             id: id,
             title: title,
             state: state,
             authorName: author,
-            webURL: allowedWebURL(dto.links?.html?.href)
+            webURL: allowedWebURL(dto.links?.html?.href),
+            sourceCommitHash: nonempty(dto.source?.commit?.hash),
+            isDraft: dto.draft ?? false,
+            availableMergeStrategies: availableStrategies,
+            defaultMergeStrategy: defaultStrategy,
+            closeSourceBranch: dto.closeSourceBranch ?? false
         )
     }
 
@@ -157,7 +167,7 @@ enum BitbucketMapper {
         }
 
         switch stage.uppercased() {
-        case "PAUSED":
+        case "PAUSED", "HALTED":
             return .awaitingApproval
         case "RUNNING":
             return PipelineStateReducer.resolve(
@@ -205,8 +215,10 @@ enum BitbucketMapper {
             allowlist: [
                 "running": "RUNNING",
                 "paused": "PAUSED",
+                "halted": "HALTED",
                 "pipeline_state_in_progress_running": "RUNNING",
                 "pipeline_state_in_progress_paused": "PAUSED",
+                "pipeline_state_in_progress_halted": "HALTED",
             ]
         )
     }
@@ -242,6 +254,7 @@ enum BitbucketMapper {
                 "pipeline_step_state_pending": "PENDING",
                 "pipeline_step_state_ready": "PENDING",
                 "pipeline_step_state_in_progress": "IN_PROGRESS",
+                "pipeline_step_state_in_progress_halted": "HALTED",
                 "pipeline_step_state_completed": "COMPLETED",
             ]
         )
