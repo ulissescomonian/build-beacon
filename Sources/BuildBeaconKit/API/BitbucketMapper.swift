@@ -110,7 +110,16 @@ enum BitbucketMapper {
               let id = dto.id,
               let title = nonempty(dto.title),
               let state = nonempty(dto.state) else { return nil }
-        return PipelinePullRequestContext(id: id, title: title, state: state, webURL: allowedWebURL(dto.links?.html?.href))
+        let author = nonempty(dto.author?.user?.displayName)
+            ?? nonempty(dto.author?.displayName)
+            ?? nonempty(dto.author?.nickname)
+        return PipelinePullRequestContext(
+            id: id,
+            title: title,
+            state: state,
+            authorName: author,
+            webURL: allowedWebURL(dto.links?.html?.href)
+        )
     }
 
     static func step(_ dto: BitbucketPipelineStepDTO) throws -> PipelineStep {

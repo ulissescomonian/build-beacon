@@ -209,12 +209,20 @@ public struct PipelinePullRequestContext: Hashable, Codable, Sendable {
     public let id: Int
     public let title: String
     public let state: String
+    public let authorName: String?
     public let webURL: URL?
 
-    public init(id: Int, title: String, state: String, webURL: URL? = nil) {
+    public init(
+        id: Int,
+        title: String,
+        state: String,
+        authorName: String? = nil,
+        webURL: URL? = nil
+    ) {
         self.id = id
         self.title = title
         self.state = state
+        self.authorName = authorName
         self.webURL = webURL
     }
 }

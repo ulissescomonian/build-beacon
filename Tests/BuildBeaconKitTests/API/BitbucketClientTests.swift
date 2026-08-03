@@ -154,7 +154,7 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
             .json(#"{"values":[{"uuid":"{pipeline}","build_number":42,"state":{"name":"COMPLETED","result":{"name":"FAILED"}},"target":{"ref_name":"feature/a","commit":{"hash":"abcdef"}},"created_on":"2026-07-21T10:00:00Z"}]}"#),
             .json(#"{"values":[{"uuid":"{step}","name":"Tests","state":{"name":"PAUSED"}}]}"#),
             .json(#"{"hash":"abcdef","message":"Ship pipeline context\n\nMore detail","author":{"user":{"display_name":"A Developer"}},"date":"2026-07-21T09:58:00Z","links":{"html":{"href":"https://bitbucket.org/team/app/commits/abcdef"}}}"#),
-            .json(#"{"values":[{"id":17,"title":"Ship context","state":"OPEN","links":{"html":{"href":"https://bitbucket.org/team/app/pull-requests/17"}}}]}"#),
+            .json(#"{"values":[{"id":17,"title":"Ship context","state":"OPEN","author":{"display_name":"PR Author","nickname":"pr-author","user":{"display_name":"User Author"}},"links":{"html":{"href":"https://bitbucket.org/team/app/pull-requests/17"}}}]}"#),
         ])
         let client = makeClient(store: store, transport: transport)
         let monitor = MonitorConfiguration(
@@ -181,6 +181,7 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(pipeline.commitContext?.webURL?.host, "bitbucket.org")
         XCTAssertEqual(pipeline.pullRequest?.id, 17)
         XCTAssertEqual(pipeline.pullRequest?.title, "Ship context")
+        XCTAssertEqual(pipeline.pullRequest?.authorName, "User Author")
         let requests = await transport.requests
         let pipelineQuery = try XCTUnwrap(URLComponents(url: try XCTUnwrap(requests.first?.url), resolvingAgainstBaseURL: false)?.queryItems)
         XCTAssertEqual(pipelineQuery.first(where: { $0.name == "q" })?.value, #"target.ref_name="feature/a""#)
@@ -199,6 +200,21 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertEqual(pipeline.origin, .pullRequest(id: 42, sourceBranch: "feature/source", destinationBranch: "develop"))
         XCTAssertEqual(pipeline.branchName, "feature/source")
+    }
+
+    func testPullRequestMapperFallsBackToTopLevelDisplayNameThenNickname() throws {
+        let decoder = JSONDecoder()
+        let displayNameDTO = try decoder.decode(
+            BitbucketPullRequestDTO.self,
+            from: Data(#"{"id":1,"title":"PR","state":"OPEN","author":{"display_name":"Display Name","nickname":"nickname"}}"#.utf8)
+        )
+        let nicknameDTO = try decoder.decode(
+            BitbucketPullRequestDTO.self,
+            from: Data(#"{"id":2,"title":"PR","state":"OPEN","author":{"nickname":"nickname"}}"#.utf8)
+        )
+
+        XCTAssertEqual(BitbucketMapper.pullRequest(displayNameDTO)?.authorName, "Display Name")
+        XCTAssertEqual(BitbucketMapper.pullRequest(nicknameDTO)?.authorName, "nickname")
     }
 
     func testPipelineMapperToleratesObjectPullRequestTargetAndAcceptsStringID() throws {
