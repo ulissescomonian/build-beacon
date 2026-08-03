@@ -23,6 +23,25 @@ public struct NotificationLedgerEntry: Hashable, Codable, Sendable {
     }
 }
 
+/// A sanitized record that a local approval reminder has already been scheduled
+/// or delivered. It deliberately stores no pipeline URL, title, body, or remote
+/// payload, so a relaunch cannot recreate a reminder for the same wait.
+public struct ApprovalReminderLedgerEntry: Hashable, Codable, Sendable {
+    public let identity: ApprovalReminderIdentity
+    public let interval: ApprovalReminderInterval
+    public let recordedAt: Date
+
+    public init(
+        identity: ApprovalReminderIdentity,
+        interval: ApprovalReminderInterval,
+        recordedAt: Date
+    ) {
+        self.identity = identity
+        self.interval = interval
+        self.recordedAt = recordedAt
+    }
+}
+
 public enum NotificationLedgerError: Error, Equatable, Sendable {
     case corrupted(quarantineURL: URL)
     case fileSystem(code: Int)
@@ -39,6 +58,7 @@ public actor NotificationLedger {
 
     private let fileManager: FileManager
     private var entries: [NotificationLedgerEntry]?
+    private var approvalReminders: [ApprovalReminderLedgerEntry]?
 
     public init(
         fileURL: URL,
@@ -108,11 +128,67 @@ public actor NotificationLedger {
     public func remove(for monitorID: MonitorID, at date: Date = .now) throws {
         try loadIfNeeded(now: date)
         let previousEntries = entries
+        let previousApprovalReminders = approvalReminders
         entries?.removeAll(where: { $0.monitorID == monitorID })
+        approvalReminders?.removeAll(where: { $0.identity.monitorID == monitorID })
         do {
             try persist()
         } catch {
             entries = previousEntries
+            approvalReminders = previousApprovalReminders
+            throw error
+        }
+    }
+
+    public func containsApprovalReminder(
+        _ identity: ApprovalReminderIdentity,
+        interval: ApprovalReminderInterval,
+        at date: Date = .now
+    ) throws -> Bool {
+        try loadIfNeeded(now: date)
+        return approvalReminders?.contains {
+            $0.identity == identity && $0.interval == interval
+        } == true
+    }
+
+    public func recordApprovalReminder(
+        _ identity: ApprovalReminderIdentity,
+        interval: ApprovalReminderInterval,
+        at date: Date = .now
+    ) throws {
+        try loadIfNeeded(now: date)
+        guard approvalReminders?.contains(where: {
+            $0.identity == identity && $0.interval == interval
+        }) != true else { return }
+        let previousReminders = approvalReminders
+        approvalReminders?.append(.init(identity: identity, interval: interval, recordedAt: date))
+        prune(now: date)
+        do {
+            try persist()
+        } catch {
+            approvalReminders = previousReminders
+            throw error
+        }
+    }
+
+    /// Removes records that no longer describe a live approval wait, or whose
+    /// interval was changed. This makes a resolved wait eligible only if it later
+    /// becomes a distinct active approval again.
+    public func reconcileApprovalReminders(
+        activeIdentities: Set<ApprovalReminderIdentity>,
+        interval: ApprovalReminderInterval,
+        at date: Date = .now
+    ) throws {
+        try loadIfNeeded(now: date)
+        let previousReminders = approvalReminders
+        approvalReminders?.removeAll {
+            !activeIdentities.contains($0.identity) || $0.interval != interval
+        }
+        guard approvalReminders != previousReminders else { return }
+        do {
+            try persist()
+        } catch {
+            approvalReminders = previousReminders
             throw error
         }
     }
@@ -123,6 +199,7 @@ public actor NotificationLedger {
                 try fileManager.removeItem(at: fileURL)
             }
             entries = []
+            approvalReminders = []
         } catch let error as NSError {
             throw NotificationLedgerError.fileSystem(code: error.code)
         }
@@ -140,16 +217,15 @@ public actor NotificationLedger {
         }
         guard fileManager.fileExists(atPath: fileURL.path) else {
             entries = []
+            approvalReminders = []
             return
         }
 
         do {
             let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
             let envelope = try decoder().decode(LedgerEnvelope.self, from: data)
-            guard envelope.schemaVersion == LedgerEnvelope.currentSchemaVersion else {
-                throw CocoaError(.coderReadCorrupt)
-            }
             entries = envelope.entries
+            approvalReminders = envelope.approvalReminders
             prune(now: now)
         } catch {
             let quarantineURL = uniqueQuarantineURL()
@@ -168,9 +244,14 @@ public actor NotificationLedger {
     private func prune(now: Date) {
         let cutoff = now.addingTimeInterval(-retentionInterval)
         entries?.removeAll(where: { $0.recordedAt < cutoff })
+        approvalReminders?.removeAll(where: { $0.recordedAt < cutoff })
         if let count = entries?.count, count > maximumEntryCount {
             entries?.sort(by: { $0.recordedAt < $1.recordedAt })
             entries?.removeFirst(count - maximumEntryCount)
+        }
+        if let count = approvalReminders?.count, count > maximumEntryCount {
+            approvalReminders?.sort(by: { $0.recordedAt < $1.recordedAt })
+            approvalReminders?.removeFirst(count - maximumEntryCount)
         }
     }
 
@@ -185,7 +266,10 @@ public actor NotificationLedger {
                 [.posixPermissions: 0o700],
                 ofItemAtPath: fileURL.deletingLastPathComponent().path
             )
-            let data = try encoder().encode(LedgerEnvelope(entries: entries ?? []))
+            let data = try encoder().encode(LedgerEnvelope(
+                entries: entries ?? [],
+                approvalReminders: approvalReminders ?? []
+            ))
             try data.write(to: fileURL, options: [.atomic])
             try fileManager.setAttributes(
                 [.posixPermissions: 0o600],
@@ -233,13 +317,33 @@ private struct Identity: Hashable {
 }
 
 private struct LedgerEnvelope: Codable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     let schemaVersion: Int
     let entries: [NotificationLedgerEntry]
+    let approvalReminders: [ApprovalReminderLedgerEntry]
 
-    init(entries: [NotificationLedgerEntry]) {
+    init(entries: [NotificationLedgerEntry], approvalReminders: [ApprovalReminderLedgerEntry]) {
         self.schemaVersion = Self.currentSchemaVersion
         self.entries = entries
+        self.approvalReminders = approvalReminders
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, entries, approvalReminders
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == 1 || schemaVersion == Self.currentSchemaVersion else {
+            throw CocoaError(.coderReadCorrupt)
+        }
+        self.schemaVersion = schemaVersion
+        entries = try values.decode([NotificationLedgerEntry].self, forKey: .entries)
+        approvalReminders = try values.decodeIfPresent(
+            [ApprovalReminderLedgerEntry].self,
+            forKey: .approvalReminders
+        ) ?? []
     }
 }

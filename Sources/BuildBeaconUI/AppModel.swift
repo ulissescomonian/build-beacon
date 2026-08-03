@@ -27,6 +27,11 @@ public protocol BuildBeaconRuntime: AnyObject {
     func setMonitors(_ monitors: [MonitorConfiguration]) async throws -> AppConfiguration
     func saveConfiguration(_ configuration: AppConfiguration) async throws -> AppConfiguration
     func saveUnseenActivity(_ markers: [MonitorActivityMarker], for accountID: AccountID) async throws -> AppConfiguration
+    func saveApprovalWaits(_ markers: [ApprovalWaitMarker], for accountID: AccountID) async throws -> AppConfiguration
+    func reconcileApprovalReminders(
+        activeApprovals: [ApprovalWaitMarker],
+        interval: ApprovalReminderInterval
+    ) async
     func history(for monitorID: MonitorID) async throws -> [PipelineHistoryEntry]
     func clearHistory(for monitorID: MonitorID) async throws
     func notificationPermissionStatus() async throws -> NotificationPermissionStatus
@@ -59,6 +64,8 @@ public final class AppModel {
     /// only the newest marker set durable and prevent an older write from winning.
     private var activityPersistenceGeneration = 0
     private var activityPersistenceTask: Task<Void, Never>?
+    private var approvalWaitPersistenceGeneration = 0
+    private var approvalWaitPersistenceTask: Task<Void, Never>?
     /// All writes that can alter `AppConfiguration` share one chain. A write reads
     /// the configuration only when its predecessor has settled, preventing a late
     /// favorite/preferences save from overwriting newer unseen activity (or vice
@@ -106,6 +113,7 @@ public final class AppModel {
     public var launchAtLogin = false
     public var monitorPresentation = MonitorPresentationPreferences()
     public var historyEnabled = true
+    public private(set) var approvalReminderInterval: ApprovalReminderInterval = .none
 
     public init(runtime: any BuildBeaconRuntime) {
         self.runtime = runtime
@@ -123,6 +131,14 @@ public final class AppModel {
         return configuration.unseenActivity.contains {
             $0.monitorID == observation.monitor.id && $0.runID == runID
         }
+    }
+
+    public func approvalDetectedAt(for observation: MonitorObservation) -> Date? {
+        approvalDetectedAt(for: observation.monitor.id, runID: observation.lastKnownRun?.id)
+    }
+
+    public func approvalDetectedAt(for monitorID: MonitorID) -> Date? {
+        approvalDetectedAt(for: monitorID, runID: snapshot?.observations[monitorID]?.lastKnownRun?.id)
     }
 
     public var aggregateState: AggregateState {
@@ -497,7 +513,9 @@ public final class AppModel {
 
     public func setNotificationsEnabled(_ enabled: Bool) async {
         notificationsEnabled = enabled
+        await reconcileApprovalReminders()
         await savePreferences()
+        await reconcileApprovalReminders()
     }
 
     public func saveMonitorPresentation(_ preferences: MonitorPresentationPreferences) async {
@@ -510,12 +528,40 @@ public final class AppModel {
         await savePreferences()
     }
 
+    /// This update is immediate in the model so settings controls remain native
+    /// and responsive; persistence follows the existing serialized preference path.
+    public func setApprovalReminderInterval(_ interval: ApprovalReminderInterval) {
+        guard approvalReminderInterval != interval else { return }
+        approvalReminderInterval = interval
+        Task { @MainActor [weak self] in
+            await self?.savePreferences()
+            await self?.reconcileApprovalReminders()
+        }
+    }
+
+    public func setMonitorProduction(_ isProduction: Bool, for monitorID: MonitorID) async {
+        guard let index = configuration.monitors.firstIndex(where: { $0.id == monitorID }),
+              configuration.monitors[index].isProduction != isProduction else { return }
+        let previous = configuration
+        configuration.monitors[index].isProduction = isProduction
+        reconcileSnapshotWithCurrentConfiguration()
+        do {
+            try await persistCurrentConfiguration { [weak self] in
+                self?.apply(configuration: previous)
+            }
+        } catch {
+            errorMessage = Self.message(for: error)
+        }
+    }
+
     public func saveNotificationPreferences() async {
         configuration.notifyOnFailure = notifyOnFailure
         configuration.notifyOnRecovery = notifyOnRecovery
         configuration.notifyOnApproval = notifyOnApproval
         configuration.notifyOnFavoriteSuccess = notifyOnFavoriteSuccess
+        await reconcileApprovalReminders()
         await savePreferences()
+        await reconcileApprovalReminders()
     }
 
     public func setLaunchAtLogin(_ enabled: Bool) async {
@@ -547,6 +593,24 @@ public final class AppModel {
     public func openPipelineBuildURL(_ observation: MonitorObservation) {
         guard let buildNumber = selectedNotificationBuildNumber ?? observation.lastKnownRun?.buildNumber else { return }
         openPipelineBuildURL(monitor: observation.monitor, buildNumber: buildNumber)
+    }
+
+    /// Notification routes must never silently open a newer build that happened
+    /// to arrive after the alert was delivered.
+    public func openPipelineBuildURL(for route: NotificationRoute) {
+        guard let monitor = configuration.monitors.first(where: { $0.id == route.monitorID }) else { return }
+        let buildNumber: Int?
+        if let routedBuildNumber = route.buildNumber {
+            buildNumber = routedBuildNumber
+        } else if let routedRunID = route.runID,
+                  let currentRun = snapshot?.observations[route.monitorID]?.lastKnownRun,
+                  currentRun.id == routedRunID {
+            buildNumber = currentRun.buildNumber
+        } else {
+            buildNumber = nil
+        }
+        guard let buildNumber, buildNumber > 0 else { return }
+        openPipelineBuildURL(monitor: monitor, buildNumber: buildNumber)
     }
 
     public func openCommitURL(_ run: PipelineRun) {
@@ -708,6 +772,7 @@ public final class AppModel {
         configuration.notifyOnFavoriteSuccess = notifyOnFavoriteSuccess
         configuration.monitorPresentation = monitorPresentation
         configuration.historyEnabled = historyEnabled
+        configuration.approvalReminderInterval = approvalReminderInterval
         let expected = configuration
         do {
             try await persistCurrentConfiguration { [weak self] in
@@ -865,6 +930,9 @@ public final class AppModel {
         if configuration.historyEnabled == expected.historyEnabled {
             configuration.historyEnabled = previous.historyEnabled
         }
+        if configuration.approvalReminderInterval == expected.approvalReminderInterval {
+            configuration.approvalReminderInterval = previous.approvalReminderInterval
+        }
         refreshIntervalSeconds = configuration.refreshIntervalSeconds
         notificationsEnabled = configuration.notificationsEnabled
         notifyOnFailure = configuration.notifyOnFailure
@@ -873,6 +941,7 @@ public final class AppModel {
         notifyOnFavoriteSuccess = configuration.notifyOnFavoriteSuccess
         monitorPresentation = configuration.monitorPresentation
         historyEnabled = configuration.historyEnabled
+        approvalReminderInterval = configuration.approvalReminderInterval
     }
 
     private func apply(configuration: AppConfiguration) {
@@ -889,6 +958,7 @@ public final class AppModel {
         notifyOnFavoriteSuccess = configuration.notifyOnFavoriteSuccess
         monitorPresentation = configuration.monitorPresentation
         historyEnabled = configuration.historyEnabled
+        approvalReminderInterval = configuration.approvalReminderInterval
         reconcileSnapshotWithCurrentConfiguration()
     }
 
@@ -943,6 +1013,17 @@ public final class AppModel {
             selectedMonitorID = Self.preferredObservation(in: snapshot)?.monitor.id
         }
         stageUnseenActivity(Array(markerByMonitorID.values))
+
+        let approvalWaits = ApprovalWaitStateReducer.reduce(
+            markers: configuration.approvalWaits,
+            observations: snapshot.observations,
+            activeMonitorIDs: existingMonitorIDs,
+            detectedAt: snapshot.completedAt
+        )
+        stageApprovalWaits(approvalWaits)
+        Task { @MainActor [weak self] in
+            await self?.reconcileApprovalReminders()
+        }
     }
 
     private func reconciled(_ snapshot: MonitoringSnapshot) -> MonitoringSnapshot {
@@ -1016,6 +1097,60 @@ public final class AppModel {
         configurationPersistenceTask = activityPersistenceTask
     }
 
+    public func approvalDetectedAt(for monitorID: MonitorID, runID: PipelineRunID?) -> Date? {
+        guard let runID else { return nil }
+        return configuration.approvalWaits.first {
+            $0.monitorID == monitorID && $0.runID == runID
+        }?.firstDetectedAt
+    }
+
+    private func stageApprovalWaits(_ markers: [ApprovalWaitMarker]) {
+        guard markers != configuration.approvalWaits else { return }
+        guard let accountID = configuration.account?.id else {
+            configuration.approvalWaits = markers
+            return
+        }
+        let previous = configuration.approvalWaits
+        configuration.approvalWaits = markers
+        approvalWaitPersistenceGeneration += 1
+        let generation = approvalWaitPersistenceGeneration
+        let configurationGeneration = configurationPersistenceGeneration
+        let predecessor = configurationPersistenceTask
+        approvalWaitPersistenceTask = Task { @MainActor [weak self] in
+            await predecessor?.value
+            guard let self else { return }
+            guard self.configurationPersistenceGeneration == configurationGeneration,
+                  self.configuration.account?.id == accountID else { return }
+            do {
+                _ = try await self.runtime.saveApprovalWaits(markers, for: accountID)
+                guard self.approvalWaitPersistenceGeneration == generation,
+                      self.configuration.account?.id == accountID,
+                      self.configuration.approvalWaits == markers else { return }
+            } catch {
+                guard self.approvalWaitPersistenceGeneration == generation,
+                      self.configuration.account?.id == accountID,
+                      self.configuration.approvalWaits == markers else { return }
+                self.configuration.approvalWaits = previous
+                self.errorMessage = Self.message(for: error)
+            }
+        }
+        configurationPersistenceTask = approvalWaitPersistenceTask
+    }
+
+    public func reconcileApprovalReminders() async {
+        guard notificationsEnabled, notifyOnApproval else {
+            await runtime.reconcileApprovalReminders(
+                activeApprovals: [],
+                interval: .none
+            )
+            return
+        }
+        await runtime.reconcileApprovalReminders(
+            activeApprovals: configuration.approvalWaits,
+            interval: approvalReminderInterval
+        )
+    }
+
     /// Account identifiers scope both snapshots and persisted markers. Do not compare
     /// an incoming account against a previous account's last run, even transiently.
     private func resetActivityBaselineForAccountChange() {
@@ -1024,6 +1159,9 @@ public final class AppModel {
         activityPersistenceGeneration += 1
         activityPersistenceTask?.cancel()
         activityPersistenceTask = nil
+        approvalWaitPersistenceGeneration += 1
+        approvalWaitPersistenceTask?.cancel()
+        approvalWaitPersistenceTask = nil
         configurationPersistenceGeneration += 1
         configurationPersistenceTask?.cancel()
         configurationPersistenceTask = nil

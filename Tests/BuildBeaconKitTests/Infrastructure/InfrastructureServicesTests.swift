@@ -55,8 +55,13 @@ final class InfrastructureServicesTests: XCTestCase, @unchecked Sendable {
 
         try await service.configureCategories()
 
-        XCTAssertEqual(center.categoryIdentifiers, [UserNotificationService.categoryIdentifier])
+        XCTAssertEqual(center.categoryIdentifiers, [
+            UserNotificationService.categoryIdentifier,
+            UserNotificationService.approvalCategoryIdentifier,
+            UserNotificationService.approvalReminderCategoryIdentifier,
+        ])
         XCTAssertTrue(center.openActionUsesForegroundPresentation)
+        XCTAssertTrue(center.approvalActionsAreForeground)
     }
 
     func testNotificationServicePreservesAuthorizationStates() async throws {
@@ -107,6 +112,26 @@ final class InfrastructureServicesTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(requests[1].content.title, "Build Beacon notifications are working")
     }
 
+    func testApprovalEventUsesTheActionableApprovalCategory() async throws {
+        let center = NotificationCenterFake(status: .authorized)
+        let service = UserNotificationService(center: center)
+        let event = NotificationEvent(
+            kind: .awaitingApproval,
+            monitorID: notificationEvent().monitorID,
+            runID: PipelineRunID(rawValue: "approval-run"),
+            buildNumber: 42,
+            title: "Approval required",
+            body: "A pipeline is waiting for approval."
+        )
+
+        try await service.deliver(event)
+
+        XCTAssertEqual(
+            center.allRequests.first?.content.categoryIdentifier,
+            UserNotificationService.approvalCategoryIdentifier
+        )
+    }
+
     func testNotificationServiceRemovesOnlyTheRequestedMonitor() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -123,6 +148,77 @@ final class InfrastructureServicesTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(center.pendingCount, 1)
         let entries = try await ledger.allEntries()
         XCTAssertEqual(entries.map(\.monitorID), [second.monitorID])
+    }
+
+    func testApprovalReminderIsScheduledOnlyOnceForTheSameWait() async throws {
+        let center = NotificationCenterFake(status: .authorized)
+        let service = UserNotificationService(center: center)
+        let marker = approvalWaitMarker(repository: "approval", runID: "42")
+
+        await service.reconcileApprovalReminders(
+            activeApprovals: [marker],
+            interval: .tenMinutes
+        )
+        await service.reconcileApprovalReminders(
+            activeApprovals: [marker],
+            interval: .tenMinutes
+        )
+
+        let requests = center.allRequests.filter {
+            $0.content.categoryIdentifier == UserNotificationService.approvalReminderCategoryIdentifier
+        }
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(
+            NotificationRoutePayload.route(from: try XCTUnwrap(requests.first).content.userInfo),
+            NotificationRoute(monitorID: marker.monitorID, runID: marker.runID)
+        )
+        XCTAssertNotNil(requests.first?.trigger as? UNTimeIntervalNotificationTrigger)
+    }
+
+    func testApprovalReminderIsCancelledWhenWaitResolvesOrPreferenceIsDisabled() async throws {
+        let center = NotificationCenterFake(status: .authorized)
+        let service = UserNotificationService(center: center)
+        let marker = approvalWaitMarker(repository: "approval", runID: "42")
+
+        await service.reconcileApprovalReminders(activeApprovals: [marker], interval: .fifteenMinutes)
+        await service.reconcileApprovalReminders(activeApprovals: [], interval: .fifteenMinutes)
+        XCTAssertEqual(center.approvalReminderPendingCount, 0)
+
+        await service.reconcileApprovalReminders(activeApprovals: [marker], interval: .tenMinutes)
+        await service.reconcileApprovalReminders(activeApprovals: [marker], interval: .none)
+        XCTAssertEqual(center.approvalReminderPendingCount, 0)
+    }
+
+    func testApprovalReminderReplacesThePendingRequestWhenIntervalChanges() async throws {
+        let center = NotificationCenterFake(status: .authorized)
+        let service = UserNotificationService(center: center)
+        let marker = approvalWaitMarker(repository: "approval", runID: "42")
+
+        await service.reconcileApprovalReminders(activeApprovals: [marker], interval: .tenMinutes)
+        let originalIdentifier = try XCTUnwrap(center.approvalReminderIdentifiers.first)
+        await service.reconcileApprovalReminders(activeApprovals: [marker], interval: .fifteenMinutes)
+
+        XCTAssertEqual(center.approvalReminderPendingCount, 1)
+        XCTAssertNotEqual(try XCTUnwrap(center.approvalReminderIdentifiers.first), originalIdentifier)
+    }
+
+    func testDeliveredApprovalReminderIsNotScheduledAgainAfterRelaunch() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let ledger = NotificationLedger(fileURL: directory.appendingPathComponent("ledger.json"))
+        let center = NotificationCenterFake(status: .authorized)
+        let marker = approvalWaitMarker(repository: "approval", runID: "42")
+        let firstService = UserNotificationService(center: center, ledger: ledger)
+
+        await firstService.reconcileApprovalReminders(activeApprovals: [marker], interval: .tenMinutes)
+        let deliveredIdentifier = try XCTUnwrap(center.approvalReminderIdentifiers.first)
+        await center.removePendingRequests(withIdentifiers: [deliveredIdentifier])
+        await firstService.reconcileApprovalReminders(activeApprovals: [marker], interval: .tenMinutes)
+        XCTAssertEqual(center.totalAddedCount, 1)
+
+        let relaunchedService = UserNotificationService(center: center, ledger: ledger)
+        await relaunchedService.reconcileApprovalReminders(activeApprovals: [marker], interval: .tenMinutes)
+        XCTAssertEqual(center.totalAddedCount, 1)
     }
 
     func testLedgerPersistsWithPrivateDirectoryAndFilePermissions() async throws {
@@ -156,6 +252,33 @@ final class InfrastructureServicesTests: XCTestCase, @unchecked Sendable {
         let entries = try await ledger.allEntries(at: base.addingTimeInterval(103))
         XCTAssertEqual(entries.count, 2)
         XCTAssertEqual(entries.map(\.monitorID.repositoryID.rawValue), ["two", "three"])
+    }
+
+    func testLedgerReadsVersionOnePayloadBeforeRecordingApprovalReminder() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("ledger.json")
+        let event = notificationEvent()
+        let legacy = LegacyLedgerEnvelope(entries: [
+            NotificationLedgerEntry(
+                monitorID: event.monitorID,
+                runID: event.runID,
+                kind: event.kind,
+                recordedAt: .now
+            ),
+        ])
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(legacy).write(to: fileURL)
+        let ledger = NotificationLedger(fileURL: fileURL)
+        let identity = ApprovalReminderIdentity(monitorID: event.monitorID, runID: PipelineRunID(rawValue: "reminder"))
+
+        let containsEvent = try await ledger.contains(event)
+        XCTAssertTrue(containsEvent)
+        try await ledger.recordApprovalReminder(identity, interval: .tenMinutes)
+        let containsReminder = try await ledger.containsApprovalReminder(identity, interval: .tenMinutes)
+        XCTAssertTrue(containsReminder)
     }
 
     func testLedgerRollsBackMemoryWhenRecordOrRemovePersistenceFails() async throws {
@@ -266,11 +389,29 @@ final class InfrastructureServicesTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    private func approvalWaitMarker(repository: String, runID: String) -> ApprovalWaitMarker {
+        ApprovalWaitMarker(
+            monitorID: MonitorID(
+                accountID: AccountID(rawValue: "account"),
+                workspaceID: WorkspaceID(rawValue: "workspace"),
+                repositoryID: RepositoryID(rawValue: repository),
+                target: .defaultBranch
+            ),
+            runID: PipelineRunID(rawValue: runID),
+            firstDetectedAt: .now
+        )
+    }
+
     private func permissions(of url: URL) throws -> Int {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let value = try XCTUnwrap(attributes[.posixPermissions] as? NSNumber)
         return value.intValue & 0o777
     }
+}
+
+private struct LegacyLedgerEnvelope: Encodable {
+    let schemaVersion = 1
+    let entries: [NotificationLedgerEntry]
 }
 
 private final class NotificationCenterFake: UserNotificationCenterClient, @unchecked Sendable {
@@ -280,6 +421,7 @@ private final class NotificationCenterFake: UserNotificationCenterClient, @unche
     private var recordedRequests: [UNNotificationRequest] = []
     private var categories: Set<UNNotificationCategory> = []
     private var requestCount = 0
+    private var totalAdditions = 0
     private let lock = NSLock()
 
     init(
@@ -293,6 +435,7 @@ private final class NotificationCenterFake: UserNotificationCenterClient, @unche
     }
 
     var addedCount: Int { withLock { recordedRequests.count } }
+    var totalAddedCount: Int { withLock { totalAdditions } }
     var pendingCount: Int { withLock { recordedRequests.count } }
     var allRequests: [UNNotificationRequest] { withLock { recordedRequests } }
     var authorizationRequests: Int { withLock { requestCount } }
@@ -303,6 +446,40 @@ private final class NotificationCenterFake: UserNotificationCenterClient, @unche
                 .first(where: { $0.identifier == UserNotificationService.categoryIdentifier })?
                 .actions
                 .contains(where: { $0.identifier == UserNotificationService.openActionIdentifier && $0.options.contains(.foreground) }) == true
+        }
+    }
+
+    var approvalActionsAreForeground: Bool {
+        withLock {
+            let categories = categories.filter {
+                $0.identifier == UserNotificationService.approvalCategoryIdentifier
+                    || $0.identifier == UserNotificationService.approvalReminderCategoryIdentifier
+            }
+            return categories.allSatisfy { category in
+                category.actions.contains(where: {
+                    $0.identifier == UserNotificationService.openActionIdentifier && $0.options.contains(.foreground)
+                }) && category.actions.contains(where: {
+                    $0.identifier == UserNotificationService.openBitbucketActionIdentifier && $0.options.contains(.foreground)
+                })
+            }
+        }
+    }
+
+    var approvalReminderPendingCount: Int {
+        withLock {
+            recordedRequests.count(where: {
+                $0.content.categoryIdentifier == UserNotificationService.approvalReminderCategoryIdentifier
+            })
+        }
+    }
+
+    var approvalReminderIdentifiers: [String] {
+        withLock {
+            recordedRequests.compactMap { request in
+                request.content.categoryIdentifier == UserNotificationService.approvalReminderCategoryIdentifier
+                    ? request.identifier
+                    : nil
+            }
         }
     }
 
@@ -325,7 +502,10 @@ private final class NotificationCenterFake: UserNotificationCenterClient, @unche
     }
 
     func add(_ request: UNNotificationRequest) async throws {
-        withLock { recordedRequests.append(request) }
+        withLock {
+            recordedRequests.append(request)
+            totalAdditions += 1
+        }
     }
 
     func pendingRequests() async -> [UNNotificationRequest] {

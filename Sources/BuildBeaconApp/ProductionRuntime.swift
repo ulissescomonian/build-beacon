@@ -245,6 +245,13 @@ final class ProductionRuntime: BuildBeaconRuntime {
         try await configurationStore.saveUnseenActivity(markers, for: accountID)
     }
 
+    func saveApprovalWaits(
+        _ markers: [ApprovalWaitMarker],
+        for accountID: AccountID
+    ) async throws -> AppConfiguration {
+        try await configurationStore.saveApprovalWaits(markers, for: accountID)
+    }
+
     /// Activity markers only affect the presentation of newly observed work.
     /// Persisting them must not interrupt or reschedule the independent monitoring loop.
     private func requiresMonitoringReconfiguration(
@@ -253,8 +260,12 @@ final class ProductionRuntime: BuildBeaconRuntime {
     ) -> Bool {
         var normalizedPrevious = previous
         normalizedPrevious.unseenActivity = []
+        normalizedPrevious.approvalWaits = []
+        normalizedPrevious.approvalReminderInterval = .none
         var normalizedConfiguration = configuration
         normalizedConfiguration.unseenActivity = []
+        normalizedConfiguration.approvalWaits = []
+        normalizedConfiguration.approvalReminderInterval = .none
         return normalizedPrevious != normalizedConfiguration
     }
 
@@ -276,6 +287,16 @@ final class ProductionRuntime: BuildBeaconRuntime {
 
     func sendTestNotification(route: NotificationRoute) async throws {
         try await notificationService.deliverTest(route: route)
+    }
+
+    func reconcileApprovalReminders(
+        activeApprovals: [ApprovalWaitMarker],
+        interval: ApprovalReminderInterval
+    ) async {
+        await notificationService.reconcileApprovalReminders(
+            activeApprovals: activeApprovals,
+            interval: interval
+        )
     }
 
     func openNotificationSettings() throws {
@@ -344,11 +365,19 @@ final class UnavailableRuntime: BuildBeaconRuntime {
         _ markers: [MonitorActivityMarker],
         for accountID: AccountID
     ) async throws -> AppConfiguration { throw failure }
+    func saveApprovalWaits(
+        _ markers: [ApprovalWaitMarker],
+        for accountID: AccountID
+    ) async throws -> AppConfiguration { throw failure }
     func history(for monitorID: MonitorID) async throws -> [PipelineHistoryEntry] { throw failure }
     func clearHistory(for monitorID: MonitorID) async throws { throw failure }
     func notificationPermissionStatus() async throws -> NotificationPermissionStatus { throw failure }
     func requestNotificationPermission() async throws -> NotificationPermissionStatus { throw failure }
     func sendTestNotification(route: NotificationRoute) async throws { throw failure }
+    func reconcileApprovalReminders(
+        activeApprovals: [ApprovalWaitMarker],
+        interval: ApprovalReminderInterval
+    ) async {}
     func openNotificationSettings() throws { throw failure }
     func openPipeline(_ observation: MonitorObservation) throws { throw failure }
     func openPipeline(monitor: MonitorConfiguration, buildNumber: Int) throws { throw failure }

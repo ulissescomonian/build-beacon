@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Universal-arm64%20%2B%20x86__64-6E56CF?style=flat-square" alt="Universal arm64 and x86 64" />
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?style=flat-square" alt="Swift 6.2" />
   <img src="https://img.shields.io/badge/UI-native%20SwiftUI-147EFB?style=flat-square" alt="Native SwiftUI" />
-  <img src="https://img.shields.io/badge/tests-230-34A853?style=flat-square" alt="230 tests" />
+  <img src="https://img.shields.io/badge/tests-251-34A853?style=flat-square" alt="251 tests" />
   <img src="https://img.shields.io/badge/status-Preview-D97706?style=flat-square" alt="Preview status" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-586069?style=flat-square" alt="MIT License" /></a>
 </p>
@@ -63,6 +63,13 @@ shows **Awaiting approval** when Bitbucket reports a paused manual gate, or when
 the first active step of an in-progress pipeline requires a manual trigger.
 This keeps active execution, automatic queueing, and a human decision visibly
 distinct.
+
+The Approval Center gives those decisions priority over active and healthy work.
+It shows how long Build Beacon has observed the wait, which is intentionally a
+local detection time rather than a claim about when Bitbucket first required
+approval. When available from trusted deployment metadata or an explicit monitor
+setting, a **Production** label adds environment context. Build Beacon never
+infers production from a branch name such as `main` or `master`.
 
 ### Recent activity and unseen work
 
@@ -160,6 +167,7 @@ The security model is intentionally narrow:
 - Selected monitor metadata and presentation preferences stay in local configuration; pipeline snapshots remain in memory. The unseen-activity marker persists only opaque monitor and run identifiers, so it can survive a relaunch without storing commit content or repository display data. Requests are made to Bitbucket only when monitoring requires them.
 - Optional local history is bounded to the most recent 20 runs per monitor, 500 entries overall, and 30 days. Its persisted entries contain run identity, status, and timing only—not repository names, branches, commit hashes, failure text, URLs, steps, credentials, payloads, or request metadata.
 - The notification ledger is bounded and sanitized to avoid repeat alerts; notifications carry a local route so opening one selects the original monitor and build instead of silently jumping to a newer result.
+- Optional approval reminders retain only opaque account, monitor, and run identifiers plus the minimum transition and timing data needed to deduplicate a 10- or 15-minute local reminder. They are cancelled when the build progresses, the monitor is removed, or the account is disconnected.
 - API access uses only the required read scopes listed above, plus the optional pull-request read scope when the user chooses to enable PR context.
 - Disconnecting removes the stored credential, active account configuration, and associated local history.
 - Network, rate-limit, malformed-response, and authentication failures are surfaced as actionable states instead of being silently treated as healthy.
@@ -194,6 +202,7 @@ After connection, Build Beacon lives in the menu bar.
 
 - Click the icon to see the overall health of your monitors and the most relevant recent state.
 - Choose **Open Dashboard** for a larger view of monitored pipelines, steps, retained run history, and any available commit or pull-request context. Each row prioritizes the relevant author, its textual source badge, and its branch or pull-request route; workspace context remains available in detail. A pull-request run shows its PR author, number, and source-to-destination route, while a normal branch run shows its commit author and remains identified as a branch. The relative age at the right shows recency, while the third line shows the latest build duration when available and combines it with an actionable step for failed, active, queued, or approval-waiting runs. Repeated requests focus the same dashboard window; if it is minimized, it is restored. If you keep the app in the Dock, clicking it follows that same open-or-focus behavior even when the dashboard is closed. The transient Dock icon disappears when you close the workspace; a tile you manually keep remains as a launcher.
+- Use the **Approval Center** to handle manual gates first. It keeps approval waits visible, can show trusted production context, and provides **Open in Bitbucket** for the exact build. This only opens the Bitbucket page: Build Beacon never approves a deployment or merges a pull request for you. In **Settings → Refresh**, you can opt into one local reminder after 10 or 15 minutes while the same approval remains pending. Reminders stop as soon as that build progresses.
 - The Dashboard opens in recent-activity order. Use its sidebar and view options to filter by state, **Recent**, or project; search repositories; group or sort monitors; and bring favorites to the top. Rows show relative activity time, while the blue **NEW** marker identifies activity you have not acknowledged yet.
 - Use the Settings button in the Dashboard toolbar, **Settings** in the menu bar, or Command-Comma to open the same native Settings window.
 - Use **Settings → Monitoring** to filter by project and search repositories before adding them. Choose **Select All Visible** to add a filtered set at once, choose one shared target (**Latest run** or **Default branch**), and confirm it as one atomic operation. Repositories already monitored cannot be selected again. The Advanced section remains available for a specific branch.
@@ -231,13 +240,13 @@ Packaging creates a local artifact; it does not publish a release, notarize the 
 
 ## Testing
 
-The current suite contains **214 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
+The current suite contains **251 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
 
 ```bash
 swift test
 ```
 
-The tests cover API mapping and transport behavior, lifecycle and adaptive polling policy, domain-state aggregation and notification policy, account and monitoring orchestration, permission and notification routing, bounded local history and configuration migration (including schema v3 unseen-activity markers), Keychain behavior, dashboard organization and recent/unseen acknowledgement semantics, reliable optimistic favorites with serial persistence and rollback, and the UI model's onboarding and error presentation.
+The tests cover API mapping and transport behavior, lifecycle and adaptive polling policy, domain-state aggregation and notification policy, account and monitoring orchestration, permission and notification routing, bounded local history and configuration migration (including schema v3 unseen-activity markers, schema v4 approval waits, and ledger v2 reminder records), Keychain behavior, dashboard organization and recent/unseen acknowledgement semantics, reliable optimistic favorites with serial persistence and rollback, and the UI model's onboarding and error presentation.
 
 ## Repository layout
 

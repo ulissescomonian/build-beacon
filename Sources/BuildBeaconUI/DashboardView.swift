@@ -1,4 +1,5 @@
 import BuildBeaconKit
+import Foundation
 import SwiftUI
 
 public struct DashboardView: View {
@@ -55,7 +56,7 @@ public struct DashboardView: View {
     }
 
     private var sections: [DashboardSection] {
-        DashboardOrganization.sections(for: filtered, grouping: model.monitorPresentation.grouping)
+        DashboardOrganization.prioritizedSections(for: filtered, grouping: model.monitorPresentation.grouping)
     }
 
     private var projects: [DashboardProject] {
@@ -147,8 +148,16 @@ public struct DashboardView: View {
                                     MonitorDashboardRow(
                                         observation: observation,
                                         refreshIntervalSeconds: model.refreshIntervalSeconds,
+                                        approvalDetectedAt: model.approvalDetectedAt(for: observation.monitor.id),
                                         isUnseen: model.isActivityUnseen(observation),
                                         isFavoriteToggleDisabled: model.isMutatingMonitors,
+                                        openApproval: {
+                                            guard let run = observation.lastKnownRun else { return }
+                                            model.openPipelineBuildURL(
+                                                monitor: observation.monitor,
+                                                buildNumber: run.buildNumber
+                                            )
+                                        },
                                         toggleFavorite: {
                                             withAnimation(
                                                 reduceMotion
@@ -187,11 +196,19 @@ public struct DashboardView: View {
                     refreshIntervalSeconds: model.refreshIntervalSeconds,
                     selectedHistory: model.selectedHistory,
                     notificationBuildNumber: model.selectedNotificationBuildNumber,
+                    approvalDetectedAt: model.approvalDetectedAt(for: selected.monitor.id),
                     openURL: model.openPipelineURL,
                     openNotificationBuild: { buildNumber in
                         model.openPipelineBuildURL(
                             monitor: selected.monitor,
                             buildNumber: buildNumber
+                        )
+                    },
+                    openApproval: {
+                        guard let run = selected.lastKnownRun else { return }
+                        model.openPipelineBuildURL(
+                            monitor: selected.monitor,
+                            buildNumber: run.buildNumber
                         )
                     },
                     openCommit: model.openCommitURL,
@@ -336,8 +353,10 @@ private enum DashboardFilter: String, CaseIterable, Identifiable {
 private struct MonitorDashboardRow: View {
     let observation: MonitorObservation
     let refreshIntervalSeconds: Int
+    let approvalDetectedAt: Date?
     let isUnseen: Bool
     let isFavoriteToggleDisabled: Bool
+    let openApproval: () -> Void
     let toggleFavorite: () -> Void
 
     private var state: ObservationVisualState {
@@ -347,7 +366,8 @@ private struct MonitorDashboardRow: View {
     private var summary: DashboardRunSummaryDisplay {
         DashboardRunSummaryPresentation.display(
             for: observation.lastKnownRun,
-            fallbackBranchName: observation.monitor.id.target.displayName
+            fallbackBranchName: observation.monitor.id.target.displayName,
+            approvalDetectedAt: approvalDetectedAt
         )
     }
 
@@ -391,6 +411,9 @@ private struct MonitorDashboardRow: View {
                         }
                         PipelineRunOriginBadge(display: summary.origin)
                     }
+                    if observation.monitor.isProduction {
+                        ProductionBadge()
+                    }
                     if let reference = summary.origin.reference {
                         if summary.author != nil || summary.origin.badgeTitle != nil {
                             Text("·")
@@ -410,6 +433,19 @@ private struct MonitorDashboardRow: View {
                         .foregroundStyle(summary.contextualStep == nil ? .secondary : state.tint)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                }
+                if let run = observation.lastKnownRun,
+                   PipelineDetailPresentation.shouldShowApprovalAction(for: run) {
+                    Button {
+                        openApproval()
+                    } label: {
+                        Label("Open approval in Bitbucket", systemImage: "safari")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Open this pending approval in Bitbucket")
+                    .accessibilityLabel("Open approval in Bitbucket for \(observation.monitor.repositoryName)")
+                    .accessibilityHint("Opens the pending build approval in Bitbucket")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -464,6 +500,22 @@ private struct MonitorDashboardRow: View {
             bundle: .module
         )
         return String(format: format, date.formatted(.relative(presentation: .named)))
+    }
+}
+
+private struct ProductionBadge: View {
+    var body: some View {
+        Text("Production")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(.orange.opacity(0.14), in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(.orange.opacity(0.38), lineWidth: 1)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("Production monitor")
     }
 }
 

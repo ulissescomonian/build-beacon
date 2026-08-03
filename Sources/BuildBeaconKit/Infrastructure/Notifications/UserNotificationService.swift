@@ -86,9 +86,13 @@ public struct SystemUserNotificationCenterClient: UserNotificationCenterClient, 
 public actor UserNotificationService: NotificationSending {
     public static let categoryIdentifier = "BUILD_BEACON_PIPELINE_EVENT"
     public static let openActionIdentifier = "BUILD_BEACON_OPEN"
+    public static let approvalCategoryIdentifier = "BUILD_BEACON_APPROVAL_EVENT"
+    public static let approvalReminderCategoryIdentifier = "BUILD_BEACON_APPROVAL_REMINDER"
+    public static let openBitbucketActionIdentifier = "BUILD_BEACON_OPEN_BITBUCKET"
 
     private let center: any UserNotificationCenterClient
     private let ledger: NotificationLedger?
+    private var inMemoryApprovalReminderRecords = Set<ApprovalReminderRecord>()
 
     public init(
         center: any UserNotificationCenterClient = SystemUserNotificationCenterClient(),
@@ -149,7 +153,7 @@ public actor UserNotificationService: NotificationSending {
         content.title = event.title
         content.body = event.body
         content.sound = .default
-        content.categoryIdentifier = Self.categoryIdentifier
+        content.categoryIdentifier = Self.categoryIdentifier(for: event.kind)
         content.userInfo = try NotificationRoutePayload.makeUserInfo(for: route)
 
         let request = UNNotificationRequest(
@@ -174,6 +178,85 @@ public actor UserNotificationService: NotificationSending {
         try? await ledger?.remove(for: monitorID)
     }
 
+    /// Keeps one local, opt-in reminder per approval wait. The reminder route
+    /// intentionally carries only opaque monitor and run identifiers, never a
+    /// remote URL or pipeline payload.
+    public func reconcileApprovalReminders(
+        activeApprovals: [ApprovalWaitMarker],
+        interval: ApprovalReminderInterval
+    ) async {
+        let pending = await center.pendingRequests()
+        let reminders = pending.filter {
+            $0.content.categoryIdentifier == Self.approvalReminderCategoryIdentifier
+        }
+
+        guard let duration = interval.duration else {
+            if !reminders.isEmpty {
+                await center.removePendingRequests(withIdentifiers: reminders.map(\.identifier))
+            }
+            inMemoryApprovalReminderRecords.removeAll()
+            try? await ledger?.reconcileApprovalReminders(activeIdentities: [], interval: .none)
+            return
+        }
+
+        let activeIdentities = Set(activeApprovals.map(\.identity))
+        try? await ledger?.reconcileApprovalReminders(
+            activeIdentities: activeIdentities,
+            interval: interval
+        )
+        inMemoryApprovalReminderRecords = inMemoryApprovalReminderRecords.filter {
+            activeIdentities.contains($0.identity) && $0.interval == interval
+        }
+        var scheduled = Set<ApprovalReminderIdentity>()
+        var staleIdentifiers: [String] = []
+        for request in reminders {
+            guard let route = NotificationRoutePayload.route(from: request.content.userInfo),
+                  let runID = route.runID else {
+                staleIdentifiers.append(request.identifier)
+                continue
+            }
+            let identity = ApprovalReminderIdentity(monitorID: route.monitorID, runID: runID)
+            guard activeIdentities.contains(identity),
+                  request.identifier == (try? Self.approvalReminderRequestIdentifier(
+                    for: identity,
+                    duration: duration
+                  )) else {
+                staleIdentifiers.append(request.identifier)
+                continue
+            }
+            scheduled.insert(identity)
+        }
+        if !staleIdentifiers.isEmpty {
+            await center.removePendingRequests(withIdentifiers: staleIdentifiers)
+        }
+
+        guard await isAuthorizedForDelivery() else { return }
+        await center.setNotificationCategories(Self.categories)
+        var considered = Set<ApprovalReminderIdentity>()
+        for marker in activeApprovals where considered.insert(marker.identity).inserted {
+            guard !scheduled.contains(marker.identity) else { continue }
+            let record = ApprovalReminderRecord(identity: marker.identity, interval: interval)
+            let wasRecorded: Bool
+            if let ledger {
+                wasRecorded = (try? await ledger.containsApprovalReminder(marker.identity, interval: interval)) ?? false
+            } else {
+                wasRecorded = inMemoryApprovalReminderRecords.contains(record)
+            }
+            guard !wasRecorded else { continue }
+            do {
+                try await scheduleApprovalReminder(marker, after: duration)
+                if let ledger {
+                    try await ledger.recordApprovalReminder(marker.identity, interval: interval)
+                } else {
+                    inMemoryApprovalReminderRecords.insert(record)
+                }
+            } catch {
+                // A reminder is a best-effort local convenience. The immediate
+                // transition alert and the dashboard remain available on failure.
+            }
+        }
+    }
+
     private func ensureDeliveryAuthorization() async throws {
         let status = try await permissionStatus()
         guard status.authorization == .authorized
@@ -181,6 +264,36 @@ public actor UserNotificationService: NotificationSending {
                 || status.authorization == .ephemeral else {
             throw UserNotificationServiceError.authorizationDenied
         }
+    }
+
+    private func isAuthorizedForDelivery() async -> Bool {
+        guard let status = try? await permissionStatus() else { return false }
+        return switch status.authorization {
+        case .authorized, .provisional, .ephemeral: true
+        default: false
+        }
+    }
+
+    private func scheduleApprovalReminder(
+        _ marker: ApprovalWaitMarker,
+        after duration: TimeInterval
+    ) async throws {
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "Approval still required")
+        content.body = String(localized: "A pipeline is still waiting for approval.")
+        content.sound = .default
+        content.categoryIdentifier = Self.approvalReminderCategoryIdentifier
+        content.userInfo = try NotificationRoutePayload.makeUserInfo(
+            for: NotificationRoute(monitorID: marker.monitorID, runID: marker.runID)
+        )
+
+        let remaining = max(1, marker.firstDetectedAt.addingTimeInterval(duration).timeIntervalSinceNow)
+        let request = UNNotificationRequest(
+            identifier: try Self.approvalReminderRequestIdentifier(for: marker.identity, duration: duration),
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: remaining, repeats: false)
+        )
+        try await center.add(request)
     }
 
     private static func monitorKey(for monitorID: MonitorID) throws -> String {
@@ -195,19 +308,48 @@ public actor UserNotificationService: NotificationSending {
         return "build-beacon.\(stableHash(monitorKey)).\(event.kind.rawValue).\(stableHash(run))"
     }
 
+    private static func approvalReminderRequestIdentifier(
+        for identity: ApprovalReminderIdentity,
+        duration: TimeInterval
+    ) throws -> String {
+        let monitorKey = try Self.monitorKey(for: identity.monitorID)
+        return "build-beacon.\(stableHash(monitorKey)).approval-reminder.\(stableHash(identity.runID.rawValue)).\(Int(duration))"
+    }
+
+    private static func categoryIdentifier(for kind: NotificationEventKind) -> String {
+        kind == .awaitingApproval ? approvalCategoryIdentifier : categoryIdentifier
+    }
+
     private static var categories: Set<UNNotificationCategory> {
         let openAction = UNNotificationAction(
             identifier: Self.openActionIdentifier,
             title: String(localized: "Open Build Beacon"),
             options: [.foreground]
         )
-        let category = UNNotificationCategory(
+        let pipelineCategory = UNNotificationCategory(
             identifier: Self.categoryIdentifier,
             actions: [openAction],
             intentIdentifiers: [],
             options: []
         )
-        return [category]
+        let openBitbucketAction = UNNotificationAction(
+            identifier: Self.openBitbucketActionIdentifier,
+            title: String(localized: "Open in Bitbucket"),
+            options: [.foreground]
+        )
+        let approvalCategory = UNNotificationCategory(
+            identifier: Self.approvalCategoryIdentifier,
+            actions: [openAction, openBitbucketAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        let approvalReminderCategory = UNNotificationCategory(
+            identifier: Self.approvalReminderCategoryIdentifier,
+            actions: [openAction, openBitbucketAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        return [pipelineCategory, approvalCategory, approvalReminderCategory]
     }
 
     /// FNV-1a is used only for stable, compact system identifiers; it is not a
@@ -220,4 +362,9 @@ public actor UserNotificationService: NotificationSending {
         }
         return String(hash, radix: 16)
     }
+}
+
+private struct ApprovalReminderRecord: Hashable {
+    let identity: ApprovalReminderIdentity
+    let interval: ApprovalReminderInterval
 }

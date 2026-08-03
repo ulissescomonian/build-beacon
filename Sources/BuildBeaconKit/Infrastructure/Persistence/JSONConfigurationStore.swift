@@ -123,6 +123,26 @@ public actor JSONConfigurationStore: ConfigurationStore {
         return normalized
     }
 
+    /// Atomically replaces approval wait state without allowing concurrent
+    /// preference writes to discard a newly detected approval.
+    public func saveApprovalWaits(
+        _ markers: [ApprovalWaitMarker],
+        for accountID: AccountID
+    ) async throws -> AppConfiguration {
+        let configuration = try loadConfiguration()
+        guard configuration.account?.id == accountID else {
+            throw ConfigurationStoreError.invalidConfiguration(
+                reason: "approval waits do not match the configured account"
+            )
+        }
+
+        var updated = configuration
+        updated.approvalWaits = markers
+        let normalized = try Self.normalized(updated)
+        try write(PersistedConfiguration(configuration: normalized))
+        return normalized
+    }
+
     public func reset() async throws {
         do {
             if fileManager.fileExists(atPath: fileURL.path) {
@@ -165,6 +185,13 @@ public actor JSONConfigurationStore: ConfigurationStore {
             )
         }
         switch detectedVersion {
+        case 3:
+            let persisted = try decoder().decode(PersistedConfigurationV3.self, from: data)
+            let migrated = try Self.normalized(AppConfiguration(legacyV3: persisted.configuration))
+            _ = try backup(suffix: "v3")
+            try write(PersistedConfiguration(configuration: migrated))
+            recoveryRequired = false
+            return migrated
         case 2:
             let persisted = try decoder().decode(PersistedConfigurationV2.self, from: data)
             let migrated = try Self.normalized(AppConfiguration(legacyV2: persisted.configuration))
@@ -296,7 +323,28 @@ public actor JSONConfigurationStore: ConfigurationStore {
         result.unseenActivity = configuration.unseenActivity.filter {
             activeMonitorIDs.contains($0.monitorID) && markedMonitorIDs.insert($0.monitorID).inserted
         }
+        var approvalMarkers: [ApprovalReminderIdentity: ApprovalWaitMarker] = [:]
+        for marker in configuration.approvalWaits where activeMonitorIDs.contains(marker.monitorID) {
+            if let existing = approvalMarkers[marker.identity] {
+                if marker.firstDetectedAt < existing.firstDetectedAt {
+                    approvalMarkers[marker.identity] = marker
+                }
+            } else {
+                approvalMarkers[marker.identity] = marker
+            }
+        }
+        result.approvalWaits = approvalMarkers.values.sorted {
+            if $0.firstDetectedAt != $1.firstDetectedAt {
+                return $0.firstDetectedAt < $1.firstDetectedAt
+            }
+            return approvalMarkerKey($0) < approvalMarkerKey($1)
+        }
         return result
+    }
+
+    private static func approvalMarkerKey(_ marker: ApprovalWaitMarker) -> String {
+        let monitor = marker.monitorID
+        return "\(monitor.accountID.rawValue)/\(monitor.workspaceID.rawValue)/\(monitor.repositoryID.rawValue)/\(monitor.target.displayName)/\(marker.runID.rawValue)"
     }
 }
 
@@ -320,6 +368,28 @@ private struct PersistedSchemaVersion: Codable, Sendable {
 private struct PersistedConfigurationV2: Codable, Sendable {
     let schemaVersion: Int
     let configuration: LegacyAppConfigurationV2
+}
+
+/// Schema 3 predated durable approval-wait timing and the explicit production
+/// monitor flag. Monitor decoding remains backward compatible, while this
+/// explicit envelope prevents current fields from weakening historical reads.
+private struct PersistedConfigurationV3: Codable, Sendable {
+    let schemaVersion: Int
+    let configuration: LegacyAppConfigurationV3
+}
+
+private struct LegacyAppConfigurationV3: Codable, Sendable {
+    let account: AccountProfile?
+    let monitors: [MonitorConfiguration]
+    let refreshIntervalSeconds: Int
+    let notificationsEnabled: Bool
+    let notifyOnFailure: Bool
+    let notifyOnRecovery: Bool
+    let notifyOnApproval: Bool
+    let notifyOnFavoriteSuccess: Bool
+    let monitorPresentation: MonitorPresentationPreferences
+    let historyEnabled: Bool
+    let unseenActivity: [MonitorActivityMarker]
 }
 
 private struct LegacyAppConfigurationV2: Codable, Sendable {
@@ -363,6 +433,24 @@ private struct LegacyMonitorConfigurationV1: Codable, Sendable {
 }
 
 private extension AppConfiguration {
+    init(legacyV3: LegacyAppConfigurationV3) {
+        self.init(
+            account: legacyV3.account,
+            monitors: legacyV3.monitors,
+            refreshIntervalSeconds: legacyV3.refreshIntervalSeconds,
+            notificationsEnabled: legacyV3.notificationsEnabled,
+            notifyOnFailure: legacyV3.notifyOnFailure,
+            notifyOnRecovery: legacyV3.notifyOnRecovery,
+            notifyOnApproval: legacyV3.notifyOnApproval,
+            notifyOnFavoriteSuccess: legacyV3.notifyOnFavoriteSuccess,
+            monitorPresentation: legacyV3.monitorPresentation,
+            historyEnabled: legacyV3.historyEnabled,
+            unseenActivity: legacyV3.unseenActivity,
+            approvalWaits: [],
+            approvalReminderInterval: .none
+        )
+    }
+
     init(legacyV2: LegacyAppConfigurationV2) {
         var presentation = legacyV2.monitorPresentation
         // Activity order is the intentional v3 product default, including for
