@@ -1780,6 +1780,85 @@ Validação final:
 
 Estado: entregue e aprovado para empacotamento Preview.
 
+### 28.26 Incremento entregue: centro de aprovações read-only
+
+Escopo e ownership:
+
+- domínio: priorizar `awaitingApproval` para apresentação, calcular a espera a
+  partir da primeira detecção local e definir transições que criam ou cancelam
+  lembretes, sem duplicar a fase normalizada;
+- API e links: usar somente ambiente de deployment retornado por metadado
+  confiável ou configuração explícita do monitor para `Production`, e construir
+  o link HTTPS canônico do build no host Bitbucket permitido;
+- UI e localização: apresentar o Centro de Aprovações, ambiente quando
+  confiável, tempo de espera honesto, ação “Abrir no Bitbucket” e preferências
+  de lembrete em 10 ou 15 minutos, completos em en e pt-BR;
+- notifications e persistência: deduplicar lembretes por conta, monitor,
+  execução e transição, persistir somente identificadores opacos e horários,
+  e cancelar registros e notificações ao progredir, remover monitor ou
+  desconectar conta;
+- integração: preservar o contrato read-only, as validações de URL, a
+  acessibilidade e as configurações existentes. Nenhum owner introduz escopo de
+  escrita, aprovação, automerge ou tarefa remota.
+
+Contrato estabilizado:
+
+- a prioridade de aprovação reorganiza a apresentação, sem criar outro estado
+  ou divergir da fase consumida por lista, detalhe, filtros, menu, polling e
+  notificações;
+- “aguardando” é tempo desde a primeira observação local da fase e não uma
+  alegação sobre o instante remoto em que a aprovação ficou disponível;
+- `Production` depende exclusivamente de metadado remoto confiável ou de
+  configuração explícita, nunca de `main`, `master`, nome de branch, projeto ou
+  etapa;
+- abrir o build no Bitbucket é uma ação externa segura e read-only, limitada a
+  HTTPS, host permitido e identificadores confiáveis;
+- lembretes são opt-in, configuráveis para 10 ou 15 minutos, deduplicados e
+  encerrados quando a aprovação deixa de existir;
+- não há aprovação in-app, automerge, novas permissões Bitbucket ou mutação
+  remota por notificação, link ou processo em segundo plano.
+
+Critérios de aceite:
+
+- uma aprovação pendente é apresentada antes de execuções ativas e saudáveis,
+  mas conserva a mesma fase normalizada em todas as superfícies;
+- o tempo de espera sobrevive ao relançamento quando o ledger permitido existir,
+  é claramente descrito como detecção local e encerra ao sair de
+  `awaitingApproval`;
+- nenhum build recebe `Production` somente por usar `main` ou `master`; tanto
+  o metadado confiável quanto a configuração explícita são cobertos por testes;
+- a ação abre o build correto e recusa host, esquema, porta, credencial ou query
+  que não passe pela allowlist;
+- o lembrete não é entregue antes da opção, não duplica na mesma transição,
+  usa somente 10 ou 15 minutos e cessa ao resolver, remover ou desconectar;
+- acessibilidade, teclado, VoiceOver, en e pt-BR comunicam ação, prioridade,
+  ambiente e a origem local do tempo sem depender só de cor;
+- fixtures, logs, preferências e ledger não carregam token, URL externa,
+  mensagem de commit, branch, etapa ou conteúdo de pull request.
+
+Riscos e mitigação:
+
+| Risco | Sinal | Mitigação |
+| --- | --- | --- |
+| falso `Production` | badge por convenção de branch | aceitar apenas metadado confiável ou escolha explícita |
+| spam de lembrete | avisos repetidos da mesma espera | opt-in, intervalo fixo, dedupe e cancelamento por transição |
+| link externo inseguro | host ou query não canônicos | construir/validar HTTPS e allowlist Bitbucket antes de abrir |
+| deriva para mutação | ação de aprovação ou scope write | testes de contrato read-only e revisão de permissões |
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| `swift test --quiet` | 251 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| build universal e assinatura | `arm64` e `x86_64`, `codesign --verify --deep --strict` e `Info.plist` aprovados |
+| DMG e sidecar SHA-256 | DMG gerado, validado com `hdiutil` e sidecar aprovado |
+| revisão final | sem achados após as correções |
+| instalação local | Build Beacon build 5 instalado, com build 4 preservado como backup recuperável |
+| QA da aplicação instalada | toggle Production por monitor e Approval reminder Off, 10 e 15 confirmados |
+
+Estado: entregue e aprovado para empacotamento Preview.
+
 ### 28.19 Incremento entregue — interação e favoritismo da lista de repositórios
 
 Escopo e ownership:

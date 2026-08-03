@@ -70,6 +70,50 @@ public struct MonitorActivityMarker: Hashable, Codable, Sendable {
     }
 }
 
+/// The stable, opaque identity of one pipeline approval wait.
+public struct ApprovalReminderIdentity: Hashable, Codable, Sendable {
+    public let monitorID: MonitorID
+    public let runID: PipelineRunID
+
+    public init(monitorID: MonitorID, runID: PipelineRunID) {
+        self.monitorID = monitorID
+        self.runID = runID
+    }
+}
+
+/// A locally observed approval wait. It contains no author, branch, commit, or
+/// pipeline payload, only the identifiers required to route a reminder.
+public struct ApprovalWaitMarker: Hashable, Codable, Sendable {
+    public let identity: ApprovalReminderIdentity
+    public let firstDetectedAt: Date
+
+    public var monitorID: MonitorID { identity.monitorID }
+    public var runID: PipelineRunID { identity.runID }
+
+    public init(
+        monitorID: MonitorID,
+        runID: PipelineRunID,
+        firstDetectedAt: Date
+    ) {
+        self.identity = ApprovalReminderIdentity(monitorID: monitorID, runID: runID)
+        self.firstDetectedAt = firstDetectedAt
+    }
+}
+
+public enum ApprovalReminderInterval: String, Hashable, Codable, Sendable, CaseIterable {
+    case none
+    case tenMinutes
+    case fifteenMinutes
+
+    public var duration: TimeInterval? {
+        switch self {
+        case .none: nil
+        case .tenMinutes: 10 * 60
+        case .fifteenMinutes: 15 * 60
+        }
+    }
+}
+
 public enum PipelinePhase: Hashable, Codable, Sendable {
     case queued
     case running
@@ -290,6 +334,9 @@ public struct MonitorConfiguration: Identifiable, Hashable, Codable, Sendable {
     public var projectName: String?
     public var isPinned: Bool
     public var isHidden: Bool
+    /// Production is an explicit monitor decision. Branch names are deliberately
+    /// not inferred because main/master are not universally production targets.
+    public var isProduction: Bool
 
     /// The persisted `isPinned` key predates the user-facing favorite control.
     /// Keep it as the storage-compatible source of truth.
@@ -306,7 +353,8 @@ public struct MonitorConfiguration: Identifiable, Hashable, Codable, Sendable {
         repositoryName: String,
         projectName: String? = nil,
         isPinned: Bool = false,
-        isHidden: Bool = false
+        isHidden: Bool = false,
+        isProduction: Bool = false
     ) {
         self.id = id
         self.workspaceSlug = workspaceSlug
@@ -316,10 +364,11 @@ public struct MonitorConfiguration: Identifiable, Hashable, Codable, Sendable {
         self.projectName = projectName
         self.isPinned = isPinned
         self.isHidden = isHidden
+        self.isProduction = isProduction
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, workspaceSlug, workspaceName, repositorySlug, repositoryName, projectName, isPinned, isHidden
+        case id, workspaceSlug, workspaceName, repositorySlug, repositoryName, projectName, isPinned, isHidden, isProduction
     }
 
     public init(from decoder: Decoder) throws {
@@ -332,6 +381,7 @@ public struct MonitorConfiguration: Identifiable, Hashable, Codable, Sendable {
         projectName = try values.decodeIfPresent(String.self, forKey: .projectName)
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
         isHidden = try values.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
+        isProduction = try values.decodeIfPresent(Bool.self, forKey: .isProduction) ?? false
     }
 }
 
@@ -456,7 +506,7 @@ public struct AccountCredential: Sendable, CustomStringConvertible {
 }
 
 public struct AppConfiguration: Hashable, Codable, Sendable {
-    public static let schemaVersion = 3
+    public static let schemaVersion = 4
 
     public var account: AccountProfile?
     public var monitors: [MonitorConfiguration]
@@ -469,6 +519,8 @@ public struct AppConfiguration: Hashable, Codable, Sendable {
     public var monitorPresentation: MonitorPresentationPreferences
     public var historyEnabled: Bool
     public var unseenActivity: [MonitorActivityMarker]
+    public var approvalWaits: [ApprovalWaitMarker]
+    public var approvalReminderInterval: ApprovalReminderInterval
 
     public init(
         account: AccountProfile? = nil,
@@ -481,7 +533,9 @@ public struct AppConfiguration: Hashable, Codable, Sendable {
         notifyOnFavoriteSuccess: Bool = false,
         monitorPresentation: MonitorPresentationPreferences = .init(),
         historyEnabled: Bool = true,
-        unseenActivity: [MonitorActivityMarker] = []
+        unseenActivity: [MonitorActivityMarker] = [],
+        approvalWaits: [ApprovalWaitMarker] = [],
+        approvalReminderInterval: ApprovalReminderInterval = .none
     ) {
         self.account = account
         self.monitors = monitors
@@ -494,10 +548,12 @@ public struct AppConfiguration: Hashable, Codable, Sendable {
         self.monitorPresentation = monitorPresentation
         self.historyEnabled = historyEnabled
         self.unseenActivity = unseenActivity
+        self.approvalWaits = approvalWaits
+        self.approvalReminderInterval = approvalReminderInterval
     }
 
     private enum CodingKeys: String, CodingKey {
-        case account, monitors, refreshIntervalSeconds, notificationsEnabled, notifyOnFailure, notifyOnRecovery, notifyOnApproval, notifyOnFavoriteSuccess, monitorPresentation, historyEnabled, unseenActivity
+        case account, monitors, refreshIntervalSeconds, notificationsEnabled, notifyOnFailure, notifyOnRecovery, notifyOnApproval, notifyOnFavoriteSuccess, monitorPresentation, historyEnabled, unseenActivity, approvalWaits, approvalReminderInterval
     }
 
     public init(from decoder: Decoder) throws {
@@ -513,6 +569,8 @@ public struct AppConfiguration: Hashable, Codable, Sendable {
         monitorPresentation = try values.decode(MonitorPresentationPreferences.self, forKey: .monitorPresentation)
         historyEnabled = try values.decode(Bool.self, forKey: .historyEnabled)
         unseenActivity = try values.decode([MonitorActivityMarker].self, forKey: .unseenActivity)
+        approvalWaits = try values.decodeIfPresent([ApprovalWaitMarker].self, forKey: .approvalWaits) ?? []
+        approvalReminderInterval = try values.decodeIfPresent(ApprovalReminderInterval.self, forKey: .approvalReminderInterval) ?? .none
     }
 }
 
@@ -606,7 +664,20 @@ public protocol CredentialStore: Sendable {
 public protocol ConfigurationStore: Sendable {
     func load() async throws -> AppConfiguration
     func save(_ configuration: AppConfiguration) async throws
+    func saveApprovalWaits(_ markers: [ApprovalWaitMarker], for accountID: AccountID) async throws -> AppConfiguration
     func reset() async throws
+}
+
+public extension ConfigurationStore {
+    /// Compatibility default for test and third-party stores that do not retain
+    /// presentation-only approval timing. Production uses the specialized JSON
+    /// implementation above.
+    func saveApprovalWaits(
+        _ markers: [ApprovalWaitMarker],
+        for accountID: AccountID
+    ) async throws -> AppConfiguration {
+        try await load()
+    }
 }
 
 public protocol BitbucketService: Sendable {
@@ -694,4 +765,8 @@ public protocol NotificationSending: Sendable {
     func deliverTest(route: NotificationRoute) async throws
     func deliver(_ event: NotificationEvent) async throws
     func removePending(for monitorID: MonitorID) async
+    func reconcileApprovalReminders(
+        activeApprovals: [ApprovalWaitMarker],
+        interval: ApprovalReminderInterval
+    ) async
 }

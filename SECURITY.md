@@ -39,9 +39,9 @@ The app is designed to keep credentials in the macOS Keychain and to minimize th
 
 ## Local data and notifications
 
-Build Beacon stores the API token only in the macOS Keychain. Its local application-support data is limited to non-secret configuration, a notification deduplication ledger, and—when the user enables it—bounded pipeline history. These files are retained only as long as needed for their feature, use user-only filesystem permissions, and are written atomically. History and ledger records contain only the minimum identifiers, state transitions, and timestamps needed for local behavior; they do not contain API payloads, commit text, branches, steps, headers, or credentials.
+Build Beacon stores the API token only in the macOS Keychain. Its local application-support data is limited to non-secret configuration, a notification and approval-reminder deduplication ledger, and—when the user enables it—bounded pipeline history. These files are retained only as long as needed for their feature, use user-only filesystem permissions, and are written atomically. History and ledger records contain only the minimum opaque identifiers, state transitions, and timestamps needed for local behavior; they do not contain API payloads, commit text, branches, steps, external URLs, headers, or credentials.
 
-Notification and history retention are bounded. Removing a monitor or disconnecting an account removes related local records and pending notifications. Changes to schemas or corrupted files must preserve recoverability: migration code must not silently overwrite unknown future data, and backups or quarantined files must receive the same restrictive permissions as their source data.
+Notification and history retention are bounded. Approval reminders are opt-in and deliver once after a 10- or 15-minute local delay; removing a monitor, resolving its approval, or disconnecting an account removes related local records and pending notifications. Explicit production-monitor configuration contains no secret and does not authorize a write action. Changes to schemas or corrupted files must preserve recoverability: migration code must not silently overwrite unknown future data, and backups or quarantined files must receive the same restrictive permissions as their source data.
 
 Notifications can reveal pipeline context such as a repository or build state on the lock screen, according to the user's notification and macOS preview settings. Users control whether notifications and local history are enabled. A report involving unexpected notification content, lock-screen disclosure, stale notifications after account changes, or records that cannot be cleared is security-relevant.
 
@@ -49,7 +49,7 @@ Notifications can reveal pipeline context such as a repository or build state on
 
 Network access is limited to the read-only Bitbucket API contract. Requests use TLS and an ephemeral session configuration; cookies, credential storage, and persistent URL caching are not used. Authorization is created only for the request and must never be recorded in logs, diagnostics, or local files.
 
-Links opened by the app must be constructed or validated locally. External links are restricted to HTTPS and the approved Bitbucket web host, without embedded credentials or unexpected ports. A link that can bypass this allowlist, leak data in a query string, or open an arbitrary destination should be reported privately.
+Links opened by the app must be constructed or validated locally. External links, including an approval center action that opens a build, are restricted to HTTPS and the approved Bitbucket web host, without embedded credentials, unexpected ports, or sensitive query data. A link that can bypass this allowlist, leak data in a query string, or open an arbitrary destination should be reported privately.
 
 ## Permissions and future scope
 

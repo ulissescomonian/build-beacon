@@ -24,10 +24,13 @@ final class AppLifecycleCoordinator {
         self.model = model
         self.dashboardPresentation = dashboardPresentation
         self.eventSource = eventSource
-        self.notificationDelegate = NotificationCenterDelegate { [weak model, weak dashboardPresentation] route in
+        self.notificationDelegate = NotificationCenterDelegate { [weak model, weak dashboardPresentation] route, action in
             guard let model else { return }
             model.handleNotificationRoute(route)
             dashboardPresentation?.openDashboard()
+            if action == .openBitbucket {
+                model.openPipelineBuildURL(for: route)
+            }
         }
     }
 

@@ -1495,3 +1495,51 @@ já obtidos pelo monitoramento. Ela não adiciona chamadas de rede, escopos,
 permissões ou persistência. O nome, o fallback e a duração devem permanecer
 disponíveis para VoiceOver, e as cores dos badges continuam complementares à
 identificação textual.
+
+### 21.26 Centro operacional de aprovações somente leitura
+
+**Decisão em 2 de agosto de 2026.** Uma aprovação manual não é apenas um
+estado a observar: é trabalho que requer uma decisão humana. O dashboard tem
+um Centro de Aprovações que prioriza execuções normalizadas como
+`awaitingApproval` acima de execuções ativas e resultados saudáveis. Essa
+prioridade é de apresentação e não cria uma segunda classificação, nem altera
+os filtros, a política de polling ou o estado remoto da pipeline.
+
+O tempo exibido como espera começa na primeira detecção local daquela
+transição para `awaitingApproval`. Ele será rotulado como, por exemplo,
+“Aguardando desde que o Build Beacon detectou há 10 min”, pois o Bitbucket não
+fornece uma origem confiável para afirmar quando a pessoa efetivamente passou a
+ser necessária. O relógio para quando a execução deixa a fase, e não é usado
+como duração total do build.
+
+O rótulo `Production` só pode existir quando o ambiente de deployment vier de
+metadado confiável retornado pelo Bitbucket ou de uma configuração explícita do
+monitor confirmada pela pessoa usuária. Nome de repositório, branch
+`main`/`master`, nome de etapa ou convenção textual não são evidência suficiente
+e nunca devem gerar esse rótulo por inferência.
+
+Cada aprovação pendente pode abrir o build correspondente no Bitbucket. A
+ação é uma navegação externa, não uma aprovação: a URL é construída a partir de
+identificadores confiáveis ou validada contra HTTPS e o host Bitbucket
+permitido, sem credenciais, portas inesperadas ou dados secretos na query. Não
+serão adicionados aprovação local, automerge, token de escrita, ação remota em
+notificação ou tarefa em segundo plano.
+
+O lembrete é uma preferência local opt-in, entregue uma vez após 10 ou 15
+minutos.
+Ele é deduplicado por conta, monitor, execução e transição de aprovação,
+cancela-se quando a execução progride, o monitor é removido ou a conta é
+desconectada, e não deve repetir indefinidamente. O ledger persistido mantém
+somente identificadores opacos, transição e horários mínimos para essa regra.
+
+Foram descartadas três alternativas: inferir produção pela branch, que cria
+falsos positivos; aprovar dentro do aplicativo, que quebraria o limite
+read-only e exigiria novo modelo de ameaça; e lembretes sem limite, que tornam
+o alerta operacionalmente ruidoso.
+
+Evidência final: 251 testes executados sem falhas, com 1 integração Keychain
+opt-in omitida. Build release, bundle universal `arm64` e `x86_64`, verificação
+estrita de assinatura e `Info.plist`, DMG validado com `hdiutil` e sidecar
+SHA-256 foram aprovados. A revisão final não deixou achados após as correções,
+e o QA da aplicação instalada confirmou o toggle Production por monitor e as
+opções Approval reminder Off, 10 e 15.

@@ -1,4 +1,5 @@
 import BuildBeaconKit
+import Foundation
 import SwiftUI
 
 public struct PipelineDetailView: View {
@@ -6,8 +7,10 @@ public struct PipelineDetailView: View {
     let refreshIntervalSeconds: Int
     let selectedHistory: [PipelineHistoryEntry]
     let notificationBuildNumber: Int?
+    let approvalDetectedAt: Date?
     let openPipeline: (MonitorObservation) -> Void
     let openNotificationBuild: (Int) -> Void
+    let openApproval: () -> Void
     let openCommit: (PipelineRun) -> Void
     let openPullRequest: (PipelinePullRequestContext) -> Void
 
@@ -16,8 +19,10 @@ public struct PipelineDetailView: View {
         refreshIntervalSeconds: Int,
         selectedHistory: [PipelineHistoryEntry] = [],
         notificationBuildNumber: Int? = nil,
+        approvalDetectedAt: Date? = nil,
         openURL: @escaping (MonitorObservation) -> Void,
         openNotificationBuild: @escaping (Int) -> Void = { _ in },
+        openApproval: @escaping () -> Void = {},
         openCommit: @escaping (PipelineRun) -> Void = { _ in },
         openPullRequest: @escaping (PipelinePullRequestContext) -> Void = { _ in }
     ) {
@@ -25,8 +30,10 @@ public struct PipelineDetailView: View {
         self.refreshIntervalSeconds = refreshIntervalSeconds
         self.selectedHistory = selectedHistory
         self.notificationBuildNumber = notificationBuildNumber
+        self.approvalDetectedAt = approvalDetectedAt
         openPipeline = openURL
         self.openNotificationBuild = openNotificationBuild
+        self.openApproval = openApproval
         self.openCommit = openCommit
         self.openPullRequest = openPullRequest
     }
@@ -46,6 +53,9 @@ public struct PipelineDetailView: View {
 
                 if let run = observation.lastKnownRun {
                     runMetadata(run)
+                    if PipelineDetailPresentation.shouldShowApprovalAction(for: run) {
+                        approvalRequiredCard(run)
+                    }
                     if PipelineDetailPresentation.shouldShowNotificationBuildCallout(
                         notificationBuildNumber: notificationBuildNumber,
                         currentBuildNumber: run.buildNumber
@@ -74,6 +84,16 @@ public struct PipelineDetailView: View {
                 Label("Open in Bitbucket", systemImage: "safari")
             }
             .disabled(observation.lastKnownRun == nil)
+
+            if let run = observation.lastKnownRun,
+               PipelineDetailPresentation.shouldShowApprovalAction(for: run) {
+                Button {
+                    openApproval()
+                } label: {
+                    Label("Open approval in Bitbucket", systemImage: "checkmark.circle")
+                }
+                .accessibilityHint("Opens the pending build approval in Bitbucket")
+            }
         }
     }
 
@@ -133,6 +153,38 @@ public struct PipelineDetailView: View {
         }
         .padding(16)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func approvalRequiredCard(_ run: PipelineRun) -> some View {
+        let summary = DashboardRunSummaryPresentation.display(
+            for: run,
+            approvalDetectedAt: approvalDetectedAt
+        )
+        return HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "pause.circle.fill")
+                .foregroundStyle(.blue)
+                .font(.title2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("Approval required")
+                        .font(.body.weight(.semibold))
+                    if observation.monitor.isProduction {
+                        ProductionDetailBadge()
+                    }
+                }
+                Text(summary.approvalWait ?? "Waiting for approval")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("Open approval in Bitbucket") {
+                openApproval()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(12)
+        .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
     }
 
     private func notificationBuildCallout(_ buildNumber: Int) -> some View {
@@ -311,7 +363,26 @@ public struct PipelineDetailView: View {
     }
 }
 
+private struct ProductionDetailBadge: View {
+    var body: some View {
+        Text("Production")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.orange)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(.orange.opacity(0.14), in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(.orange.opacity(0.38), lineWidth: 1)
+            }
+            .accessibilityLabel("Production monitor")
+    }
+}
+
 enum PipelineDetailPresentation {
+    static func shouldShowApprovalAction(for run: PipelineRun) -> Bool {
+        run.phase == .awaitingApproval && run.buildNumber > 0
+    }
+
     static var startTimeUnavailable: String {
         String(
             localized: "pipeline.detail.startTime.unavailable",

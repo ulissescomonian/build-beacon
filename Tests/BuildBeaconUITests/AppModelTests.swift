@@ -866,6 +866,98 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(runtime.saveUnseenActivityCalls, 0)
     }
 
+    func testApprovalDetectionPersistsFirstTimestampAndClearsAfterSuccessfulAdvance() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "approval", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        let detectedAt = Date(timeIntervalSinceReferenceDate: 100)
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(), startedAt: detectedAt, completedAt: detectedAt, reason: .scheduled,
+            observations: [monitor.id: MonitorObservation(
+                monitor: monitor,
+                lastKnownRun: PipelineRun(id: PipelineRunID(rawValue: "wait"), buildNumber: 4, phase: .awaitingApproval)
+            )],
+            aggregateState: .awaitingApproval
+        )
+
+        await model.refresh()
+        await settleActivityPersistence()
+
+        XCTAssertEqual(model.approvalDetectedAt(for: monitor.id, runID: PipelineRunID(rawValue: "wait")), detectedAt)
+        XCTAssertEqual(runtime.configuration.approvalWaits, model.configuration.approvalWaits)
+        XCTAssertEqual(runtime.saveApprovalWaitsCalls, 1)
+
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(), startedAt: detectedAt, completedAt: detectedAt.addingTimeInterval(60), reason: .scheduled,
+            observations: [monitor.id: MonitorObservation(
+                monitor: monitor,
+                lastKnownRun: PipelineRun(id: PipelineRunID(rawValue: "wait"), buildNumber: 4, phase: .running)
+            )],
+            aggregateState: .running
+        )
+        await model.refresh()
+        await settleActivityPersistence()
+
+        XCTAssertNil(model.approvalDetectedAt(for: monitor.id, runID: PipelineRunID(rawValue: "wait")))
+        XCTAssertTrue(runtime.configuration.approvalWaits.isEmpty)
+    }
+
+    func testApprovalReminderAndProductionPreferencesPersist() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "production", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+
+        model.setApprovalReminderInterval(.tenMinutes)
+        await settleActivityPersistence()
+        await model.setMonitorProduction(true, for: monitor.id)
+
+        XCTAssertEqual(model.approvalReminderInterval, .tenMinutes)
+        XCTAssertEqual(runtime.configuration.approvalReminderInterval, .tenMinutes)
+        XCTAssertTrue(runtime.configuration.monitors[0].isProduction)
+        XCTAssertEqual(runtime.reconciledApprovalReminders.last?.1, .tenMinutes)
+    }
+
+    func testDisablingGlobalNotificationsCancelsApprovalRemindersImmediately() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "reminder-global", in: workspace, accountID: model.configuration.account!.id)
+        let marker = ApprovalWaitMarker(
+            monitorID: monitor.id,
+            runID: PipelineRunID(rawValue: "waiting"),
+            firstDetectedAt: .now
+        )
+        model.configuration.monitors = [monitor]
+        model.configuration.approvalWaits = [marker]
+        runtime.configuration = model.configuration
+        model.setApprovalReminderInterval(.tenMinutes)
+        await settleActivityPersistence()
+
+        await model.setNotificationsEnabled(false)
+
+        XCTAssertEqual(runtime.reconciledApprovalReminders.last?.0, [])
+        XCTAssertEqual(runtime.reconciledApprovalReminders.last?.1, ApprovalReminderInterval.none)
+    }
+
+    func testDisablingApprovalNotificationsCancelsApprovalRemindersImmediately() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "reminder-approval", in: workspace, accountID: model.configuration.account!.id)
+        let marker = ApprovalWaitMarker(
+            monitorID: monitor.id,
+            runID: PipelineRunID(rawValue: "waiting"),
+            firstDetectedAt: .now
+        )
+        model.configuration.monitors = [monitor]
+        model.configuration.approvalWaits = [marker]
+        runtime.configuration = model.configuration
+
+        model.notifyOnApproval = false
+        await model.saveNotificationPreferences()
+
+        XCTAssertEqual(runtime.reconciledApprovalReminders.last?.0, [])
+        XCTAssertEqual(runtime.reconciledApprovalReminders.last?.1, ApprovalReminderInterval.none)
+    }
+
     func testLaterNewRunMarksMonitorUnseenAndPersistsIt() async {
         let (model, runtime, workspace) = makeConnectedModel()
         let monitor = monitor(id: "new-run", in: workspace, accountID: model.configuration.account!.id)
@@ -1175,6 +1267,40 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedBuildNumber, 42)
     }
 
+    func testReminderRouteWithoutBuildNumberOpensCurrentMatchingRun() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "reminder-route", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(monitor: monitor, runID: "waiting", buildNumber: 51)
+        await model.refresh()
+
+        model.openPipelineBuildURL(for: NotificationRoute(
+            monitorID: monitor.id,
+            runID: PipelineRunID(rawValue: "waiting")
+        ))
+
+        XCTAssertEqual(runtime.openedPipelineBuilds.count, 1)
+        XCTAssertEqual(runtime.openedPipelineBuilds.first?.0, monitor.id)
+        XCTAssertEqual(runtime.openedPipelineBuilds.first?.1, 51)
+    }
+
+    func testReminderRouteWithoutBuildNumberNeverOpensDifferentCurrentRun() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "reminder-route-mismatch", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(monitor: monitor, runID: "newer", buildNumber: 52)
+        await model.refresh()
+
+        model.openPipelineBuildURL(for: NotificationRoute(
+            monitorID: monitor.id,
+            runID: PipelineRunID(rawValue: "older")
+        ))
+
+        XCTAssertTrue(runtime.openedPipelineBuilds.isEmpty)
+    }
+
     func testSelectedNotificationBuildBelongsOnlyToItsSelectedMonitor() async {
         let (model, _, workspace) = makeConnectedModel()
         let first = monitor(id: "first", in: workspace, accountID: model.configuration.account!.id)
@@ -1339,6 +1465,9 @@ private final class RuntimeStub: BuildBeaconRuntime {
     var suspendsConfigurationSave = false
     var saveUnseenActivityError: (any Error)?
     var saveUnseenActivityCalls = 0
+    var saveApprovalWaitsError: (any Error)?
+    var saveApprovalWaitsCalls = 0
+    var reconciledApprovalReminders: [([ApprovalWaitMarker], ApprovalReminderInterval)] = []
     var suspendsUnseenActivitySave = false
     var refreshCalls = 0
     var refreshReasons: [RefreshReason] = []
@@ -1512,6 +1641,24 @@ private final class RuntimeStub: BuildBeaconRuntime {
         guard configuration.account?.id == accountID else { throw RuntimeStubError.expectedFailure }
         configuration.unseenActivity = markers
         return configuration
+    }
+
+    func saveApprovalWaits(
+        _ markers: [ApprovalWaitMarker],
+        for accountID: AccountID
+    ) async throws -> AppConfiguration {
+        saveApprovalWaitsCalls += 1
+        if let saveApprovalWaitsError { throw saveApprovalWaitsError }
+        guard configuration.account?.id == accountID else { throw RuntimeStubError.expectedFailure }
+        configuration.approvalWaits = markers
+        return configuration
+    }
+
+    func reconcileApprovalReminders(
+        activeApprovals: [ApprovalWaitMarker],
+        interval: ApprovalReminderInterval
+    ) async {
+        reconciledApprovalReminders.append((activeApprovals, interval))
     }
 
     func history(for monitorID: MonitorID) async throws -> [PipelineHistoryEntry] {

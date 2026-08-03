@@ -101,6 +101,38 @@ final class DashboardRunSummaryPresentationTests: XCTestCase {
         XCTAssertTrue(display.contextualStep?.contains("Production") == true)
     }
 
+    func testAwaitingApprovalRunShowsTimeSinceDetection() {
+        let detectedAt = Date(timeIntervalSinceReferenceDate: 100)
+        let now = Date(timeIntervalSinceReferenceDate: 220)
+        let display = DashboardRunSummaryPresentation.display(
+            for: run(phase: .awaitingApproval),
+            approvalDetectedAt: detectedAt,
+            now: now
+        )
+
+        XCTAssertEqual(
+            display.approvalWait,
+            String(
+                format: String(
+                    localized: "pipeline.summary.approval.detected.format",
+                    defaultValue: "Detected %@ ago",
+                    bundle: .module
+                ),
+                Duration.seconds(120).formatted(.units())
+            )
+        )
+    }
+
+    func testNonApprovalRunDoesNotShowTimeSinceDetection() {
+        let display = DashboardRunSummaryPresentation.display(
+            for: run(phase: .running),
+            approvalDetectedAt: Date(timeIntervalSinceReferenceDate: 100),
+            now: Date(timeIntervalSinceReferenceDate: 220)
+        )
+
+        XCTAssertNil(display.approvalWait)
+    }
+
     func testSuccessfulRunDoesNotShowContextualStep() {
         let display = DashboardRunSummaryPresentation.display(for: run(
             phase: .succeeded,
@@ -153,6 +185,7 @@ final class DashboardRunSummaryPresentationTests: XCTestCase {
                 "pipeline.summary.step.running.format",
                 "pipeline.summary.step.approval.format",
                 "pipeline.summary.step.queued.format",
+                "pipeline.summary.approval.detected.format",
                 "pipeline.summary.accessibility.duration.format",
                 "pipeline.summary.accessibility.age.format"
             ] {

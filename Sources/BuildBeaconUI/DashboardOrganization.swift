@@ -118,6 +118,28 @@ enum DashboardOrganization {
         }
     }
 
+    /// Approval requests are operational work, not merely another sort state. Keep
+    /// them in a compact leading section while preserving the user's chosen order
+    /// for both the approval items themselves and every remaining repository.
+    static func prioritizedSections(
+        for observations: [MonitorObservation],
+        grouping: MonitorPresentationPreferences.Grouping
+    ) -> [DashboardSection] {
+        let approvals = observations.filter { $0.lastKnownRun?.phase == .awaitingApproval }
+        guard !approvals.isEmpty else {
+            return sections(for: observations, grouping: grouping)
+        }
+
+        let remaining = observations.filter { $0.lastKnownRun?.phase != .awaitingApproval }
+        return [
+            DashboardSection(
+                id: "approval-required",
+                title: String(localized: "Approval required", bundle: .module),
+                observations: approvals
+            ),
+        ] + sections(for: remaining, grouping: grouping)
+    }
+
     private static func matches(
         _ filter: DashboardProjectFilter,
         observation: MonitorObservation

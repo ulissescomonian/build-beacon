@@ -1,18 +1,20 @@
 import BuildBeaconKit
+import Foundation
 
 struct DashboardRunSummaryDisplay: Equatable {
     let author: String?
     let origin: PipelineRunOriginDisplay
     let contextualStep: String?
     let duration: String?
+    let approvalWait: String?
 
     var metadata: String? {
-        let text = [contextualStep, duration].compactMap { $0 }.joined(separator: " · ")
+        let text = [contextualStep, approvalWait, duration].compactMap { $0 }.joined(separator: " · ")
         return text.isEmpty ? nil : text
     }
 
     var accessibilityLabel: String? {
-        let label = [author, origin.accessibilityLabel ?? origin.badgeTitle, origin.reference, contextualStep, durationAccessibilityLabel]
+        let label = [author, origin.accessibilityLabel ?? origin.badgeTitle, origin.reference, contextualStep, approvalWait, durationAccessibilityLabel]
             .compactMap { $0 }
             .joined(separator: ", ")
         return label.isEmpty ? nil : label
@@ -32,14 +34,17 @@ struct DashboardRunSummaryDisplay: Equatable {
 enum DashboardRunSummaryPresentation {
     static func display(
         for run: PipelineRun?,
-        fallbackBranchName: String? = nil
+        fallbackBranchName: String? = nil,
+        approvalDetectedAt: Date? = nil,
+        now: Date = .now
     ) -> DashboardRunSummaryDisplay {
         guard let run else {
             return DashboardRunSummaryDisplay(
                 author: nil,
                 origin: PipelineRunOriginPresentation.display(for: .unknown, fallbackBranchName: fallbackBranchName),
                 contextualStep: nil,
-                duration: nil
+                duration: nil,
+                approvalWait: nil
             )
         }
 
@@ -48,9 +53,10 @@ enum DashboardRunSummaryPresentation {
             origin: PipelineRunOriginPresentation.display(
                     for: run.origin,
                     fallbackBranchName: run.branchName ?? fallbackBranchName
-                ),
+            ),
             contextualStep: contextualStep(for: run),
-            duration: PipelineDetailPresentation.duration(of: run)?.formatted(.units())
+            duration: PipelineDetailPresentation.duration(of: run)?.formatted(.units()),
+            approvalWait: approvalWait(for: run, detectedAt: approvalDetectedAt, now: now)
         )
     }
 
@@ -89,6 +95,19 @@ enum DashboardRunSummaryPresentation {
 
         guard let step else { return nil }
         return String(format: format, step.name)
+    }
+
+    private static func approvalWait(for run: PipelineRun, detectedAt: Date?, now: Date) -> String? {
+        guard run.phase == .awaitingApproval,
+              let detectedAt,
+              now >= detectedAt else { return nil }
+        let elapsed = Duration.seconds(now.timeIntervalSince(detectedAt)).formatted(.units())
+        let format = String(
+            localized: "pipeline.summary.approval.detected.format",
+            defaultValue: "Detected %@ ago",
+            bundle: .module
+        )
+        return String(format: format, elapsed)
     }
 
     private static var authorUnavailable: String {

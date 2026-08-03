@@ -3,6 +3,16 @@ import BuildBeaconKit
 import XCTest
 
 final class PipelineDetailPresentationTests: XCTestCase {
+    func testApprovalActionAppearsOnlyForAwaitingApprovalBuild() {
+        XCTAssertTrue(PipelineDetailPresentation.shouldShowApprovalAction(for: makeRun(phase: .awaitingApproval)))
+        XCTAssertFalse(PipelineDetailPresentation.shouldShowApprovalAction(for: makeRun(phase: .running)))
+        XCTAssertFalse(
+            PipelineDetailPresentation.shouldShowApprovalAction(
+                for: makeRun(phase: .awaitingApproval, buildNumber: 0)
+            )
+        )
+    }
+
     func testDurationUsesCompletedAndStartedDates() {
         let run = makeRun(startedAt: date(0), completedAt: date(90))
 
@@ -92,13 +102,15 @@ final class PipelineDetailPresentationTests: XCTestCase {
 
     private func makeRun(
         id: String = "run",
+        phase: PipelinePhase = .succeeded,
+        buildNumber: Int = 12,
         startedAt: Date? = nil,
         completedAt: Date? = nil
     ) -> PipelineRun {
         PipelineRun(
             id: PipelineRunID(rawValue: id),
-            buildNumber: 12,
-            phase: .succeeded,
+            buildNumber: buildNumber,
+            phase: phase,
             startedAt: startedAt,
             completedAt: completedAt
         )

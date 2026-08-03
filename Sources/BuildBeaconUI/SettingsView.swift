@@ -131,6 +131,16 @@ public struct BuildBeaconSettingsView: View {
                             Text("\(monitor.workspaceName) · \(monitor.id.target.displayName)")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
+                        Toggle("Production", isOn: Binding(
+                            get: { monitor.isProduction },
+                            set: { isProduction in
+                                Task { await model.setMonitorProduction(isProduction, for: monitor.id) }
+                            }
+                        ))
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .accessibilityHint("Marks \(monitor.repositoryName) as a production monitor")
+                        .disabled(model.isMutatingMonitors)
                         Spacer()
                         Button(role: .destructive) {
                             Task { await model.removeMonitor(monitor.id) }
@@ -193,6 +203,17 @@ public struct BuildBeaconSettingsView: View {
                         .onChange(of: model.notifyOnApproval) { _, _ in
                             Task { await model.saveNotificationPreferences() }
                         }
+                    Picker("Approval reminder", selection: Binding(
+                        get: { model.approvalReminderInterval },
+                        set: { model.setApprovalReminderInterval($0) }
+                    )) {
+                        Text("Off").tag(ApprovalReminderInterval.none)
+                        Text("10 minutes").tag(ApprovalReminderInterval.tenMinutes)
+                        Text("15 minutes").tag(ApprovalReminderInterval.fifteenMinutes)
+                    }
+                    Text("Reminds you once while a pipeline still awaits approval.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Toggle("Successful favorite pipelines", isOn: $model.notifyOnFavoriteSuccess)
                         .onChange(of: model.notifyOnFavoriteSuccess) { _, _ in
                             Task { await model.saveNotificationPreferences() }

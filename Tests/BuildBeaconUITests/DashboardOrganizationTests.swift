@@ -77,6 +77,32 @@ final class DashboardOrganizationTests: XCTestCase {
         XCTAssertEqual(visible.map(\.monitor.repositoryName), ["failed", "approval", "running", "healthy"])
     }
 
+    func testPrioritizedSectionsPlaceApprovalsBeforeEveryOtherGroup() {
+        let approval = observation("approval", project: "Zebra", phase: .awaitingApproval)
+        let other = observation("other", project: "Alpha", phase: .succeeded)
+
+        let sections = DashboardOrganization.prioritizedSections(
+            for: [other, approval],
+            grouping: .project
+        )
+
+        XCTAssertEqual(sections.first?.id, "approval-required")
+        XCTAssertEqual(sections.first?.observations.map(\.monitor.repositoryName), ["approval"])
+        XCTAssertEqual(sections.dropFirst().flatMap(\.observations).map(\.monitor.repositoryName), ["other"])
+    }
+
+    func testPrioritizedSectionsKeepsNormalSectionsWhenNoApprovalExists() {
+        let first = observation("first", project: "Alpha", phase: .succeeded)
+        let second = observation("second", project: "Beta", phase: .running)
+
+        let sections = DashboardOrganization.prioritizedSections(
+            for: [first, second],
+            grouping: .project
+        )
+
+        XCTAssertEqual(sections.map(\.title), ["Alpha", "Beta"])
+    }
+
     func testProjectGroupingPlacesUnassignedInOwnSection() {
         let mobile = observation("mobile", project: "Mobile")
         let unassigned = observation("misc")

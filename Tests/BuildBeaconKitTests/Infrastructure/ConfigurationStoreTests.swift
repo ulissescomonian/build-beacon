@@ -83,7 +83,7 @@ final class ConfigurationStoreTests: XCTestCase, @unchecked Sendable {
         let migratedObject = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
         )
-        XCTAssertEqual(migratedObject["schemaVersion"] as? Int, 3)
+        XCTAssertEqual(migratedObject["schemaVersion"] as? Int, AppConfiguration.schemaVersion)
     }
 
     func testActivityPreferencesDefaultToDisabledAndEmpty() {
@@ -92,6 +92,57 @@ final class ConfigurationStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(configuration.notifyOnFavoriteSuccess)
         XCTAssertTrue(configuration.unseenActivity.isEmpty)
         XCTAssertEqual(configuration.monitorPresentation.sortOrder, .recentActivity)
+    }
+
+    func testV3ConfigurationMigratesApprovalWaitDefaultsAndProductionFlag() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("configuration.json")
+        try wrappedLegacyV3Data(from: AppConfiguration(monitors: [monitor()])).write(to: fileURL, options: .atomic)
+
+        let loaded = try await JSONConfigurationStore(fileURL: fileURL).load()
+
+        XCTAssertFalse(loaded.monitors[0].isProduction)
+        XCTAssertTrue(loaded.approvalWaits.isEmpty)
+        XCTAssertEqual(loaded.approvalReminderInterval, .none)
+        let migratedObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
+        )
+        XCTAssertEqual(migratedObject["schemaVersion"] as? Int, AppConfiguration.schemaVersion)
+    }
+
+    func testApprovalWaitsRoundTripAtomicallyAndPruneInactiveMarkers() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("configuration.json")
+        let account = AccountProfile(
+            id: AccountID(rawValue: "account"), displayName: "Account", email: "account@example.com"
+        )
+        let active = monitor()
+        let inactive = MonitorID(
+            accountID: account.id,
+            workspaceID: WorkspaceID(rawValue: "workspace"),
+            repositoryID: RepositoryID(rawValue: "inactive"),
+            target: .defaultBranch
+        )
+        try await JSONConfigurationStore(fileURL: fileURL).save(AppConfiguration(
+            account: account,
+            monitors: [active],
+            approvalReminderInterval: .fifteenMinutes
+        ))
+        let later = Date(timeIntervalSinceReferenceDate: 100)
+        let earliest = Date(timeIntervalSinceReferenceDate: 10)
+        let valid = ApprovalWaitMarker(monitorID: active.id, runID: PipelineRunID(rawValue: "run"), firstDetectedAt: later)
+        let duplicateEarlier = ApprovalWaitMarker(monitorID: active.id, runID: PipelineRunID(rawValue: "run"), firstDetectedAt: earliest)
+        let inactiveMarker = ApprovalWaitMarker(monitorID: inactive, runID: PipelineRunID(rawValue: "missing"), firstDetectedAt: earliest)
+
+        let saved = try await JSONConfigurationStore(fileURL: fileURL).saveApprovalWaits(
+            [valid, duplicateEarlier, inactiveMarker], for: account.id
+        )
+
+        XCTAssertEqual(saved.approvalWaits, [duplicateEarlier])
+        XCTAssertEqual(saved.approvalReminderInterval, .fifteenMinutes)
     }
 
     func testSaveUnseenActivityAtomicallyPreservesOtherPreferencesAndPrunesMarkers() async throws {
@@ -226,7 +277,7 @@ final class ConfigurationStoreTests: XCTestCase, @unchecked Sendable {
         let migratedObject = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
         )
-        XCTAssertEqual(migratedObject["schemaVersion"] as? Int, 3)
+        XCTAssertEqual(migratedObject["schemaVersion"] as? Int, AppConfiguration.schemaVersion)
     }
 
     func testCorruptionIsQuarantinedAndBlocksSaveUntilReset() async throws {
@@ -387,6 +438,24 @@ final class ConfigurationStoreTests: XCTestCase, @unchecked Sendable {
         object.removeValue(forKey: "unseenActivity")
         return try JSONSerialization.data(
             withJSONObject: ["schemaVersion": 2, "configuration": object],
+            options: [.sortedKeys]
+        )
+    }
+
+    private func wrappedLegacyV3Data(from configuration: AppConfiguration) throws -> Data {
+        var object = try encodedConfigurationObject(configuration, excludingV2Fields: false)
+        object.removeValue(forKey: "approvalWaits")
+        object.removeValue(forKey: "approvalReminderInterval")
+        if var monitors = object["monitors"] as? [[String: Any]] {
+            monitors = monitors.map { monitor in
+                var legacy = monitor
+                legacy.removeValue(forKey: "isProduction")
+                return legacy
+            }
+            object["monitors"] = monitors
+        }
+        return try JSONSerialization.data(
+            withJSONObject: ["schemaVersion": 3, "configuration": object],
             options: [.sortedKeys]
         )
     }
