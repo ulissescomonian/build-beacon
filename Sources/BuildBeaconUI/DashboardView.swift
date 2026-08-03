@@ -344,16 +344,10 @@ private struct MonitorDashboardRow: View {
         observation.visualState(refreshIntervalSeconds: refreshIntervalSeconds)
     }
 
-    private var originDisplay: PipelineRunOriginDisplay {
-        guard let run = observation.lastKnownRun else {
-            return PipelineRunOriginPresentation.display(
-                for: .unknown,
-                fallbackBranchName: observation.monitor.id.target.displayName
-            )
-        }
-        return PipelineRunOriginPresentation.display(
-            for: run.origin,
-            fallbackBranchName: run.branchName ?? observation.monitor.id.target.displayName
+    private var summary: DashboardRunSummaryDisplay {
+        DashboardRunSummaryPresentation.display(
+            for: observation.lastKnownRun,
+            fallbackBranchName: observation.monitor.id.target.displayName
         )
     }
 
@@ -385,15 +379,22 @@ private struct MonitorDashboardRow: View {
                     }
                 }
                 HStack(spacing: 5) {
-                    Text(observation.monitor.workspaceName)
-                        .lineLimit(1)
-                        .layoutPriority(-1)
-                    if observation.lastKnownRun != nil {
-                        Text("·")
-                        PipelineRunOriginBadge(display: originDisplay)
+                    if let author = summary.author {
+                        Text(author)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .layoutPriority(1)
                     }
-                    if let reference = originDisplay.reference {
-                        Text("·")
+                    if observation.lastKnownRun != nil {
+                        if summary.author != nil {
+                            Text("·")
+                        }
+                        PipelineRunOriginBadge(display: summary.origin)
+                    }
+                    if let reference = summary.origin.reference {
+                        if summary.author != nil || summary.origin.badgeTitle != nil {
+                            Text("·")
+                        }
                         Text(reference)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -403,6 +404,13 @@ private struct MonitorDashboardRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                if let metadata = summary.metadata {
+                    Text(metadata)
+                        .font(.caption)
+                        .foregroundStyle(summary.contextualStep == nil ? .secondary : state.tint)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -431,6 +439,7 @@ private struct MonitorDashboardRow: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .accessibilityLabel(ageAccessibilityLabel(for: activityDate))
                     } else if let hash = run.commitHash {
                         Text(String(hash.prefix(7)))
                             .font(.caption.monospaced())
@@ -445,6 +454,16 @@ private struct MonitorDashboardRow: View {
         .frame(minHeight: DashboardRepositoryRowMetrics.minimumHeight)
         .listRowBackground(isUnseen ? Color.accentColor.opacity(0.08) : Color.clear)
         .accessibilityElement(children: .contain)
+        .accessibilityValue(summary.accessibilityLabel ?? state.title)
+    }
+
+    private func ageAccessibilityLabel(for date: Date) -> String {
+        let format = String(
+            localized: "pipeline.summary.accessibility.age.format",
+            defaultValue: "Build age: %@",
+            bundle: .module
+        )
+        return String(format: format, date.formatted(.relative(presentation: .named)))
     }
 }
 

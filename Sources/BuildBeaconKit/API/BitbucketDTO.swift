@@ -10,12 +10,21 @@ struct BitbucketUserDTO: Decodable {
     let accountID: String?
     let displayName: String?
     let nickname: String?
+    let user: BitbucketNestedUserDTO?
 
     enum CodingKeys: String, CodingKey {
         case uuid
         case accountID = "account_id"
         case displayName = "display_name"
-        case nickname
+        case nickname, user
+    }
+}
+
+struct BitbucketNestedUserDTO: Decodable {
+    let displayName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
     }
 }
 
@@ -244,6 +253,7 @@ struct BitbucketPullRequestDTO: Decodable, Sendable {
     let id: Int?
     let title: String?
     let state: String?
+    let author: BitbucketUserDTO?
     let links: BitbucketLinksDTO?
 }
 

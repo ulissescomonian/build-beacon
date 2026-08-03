@@ -245,6 +245,13 @@
 "pipeline.origin.accessibility.branch" = "Pipeline de branch";
 "pipeline.origin.accessibility.pullRequest" = "Pipeline de pull request";
 "pipeline.origin.accessibility.pullRequest.format" = "Pull request número %lld";
+"pipeline.summary.author.unavailable" = "Autor indisponível";
+"pipeline.summary.step.failed.format" = "Falhou em %@";
+"pipeline.summary.step.running.format" = "Executando %@";
+"pipeline.summary.step.approval.format" = "Aguardando aprovação em %@";
+"pipeline.summary.step.queued.format" = "Na fila: %@";
+"pipeline.summary.accessibility.duration.format" = "Duração do build: %@";
+"pipeline.summary.accessibility.age.format" = "Idade do build: %@";
 "Build Beacon notifications are working" = "As notificações do Build Beacon estão funcionando";
 "This is a test notification for the selected pipeline." = "Esta é uma notificação de teste para a pipeline selecionada.";
 "Open Build Beacon" = "Abrir Build Beacon";

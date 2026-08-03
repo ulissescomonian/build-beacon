@@ -1465,3 +1465,33 @@ universal para `arm64` e `x86_64`, verificação estrita de assinatura e
 pt-BR, `git diff --check` e a instalação local do novo bundle foram verificados;
 os achados médios e P2 das revisões independentes foram corrigidos e revalidados
 sem regressões.
+
+### 21.25 Autoria útil e densidade informacional na lista
+
+**Decisão em 2 de agosto de 2026.** A linha resumida do dashboard prioriza o
+responsável pela execução sobre o workspace. Como os monitores do contexto
+atual podem pertencer ao mesmo workspace, repetir esse nome em cada linha não
+ajuda a decidir onde investigar. O workspace continua disponível no detalhe e
+na configuração, mas deixa de ocupar espaço na lista.
+
+Para uma execução `pullRequest`, a lista mostra exclusivamente o autor da PR.
+Para uma execução `branch`, mostra o autor do commit. A origem `unknown` não
+inventa identidade, mesmo que exista contexto incompleto ou aparentemente
+relacionado. Se a origem for conhecida e o autor correspondente não estiver
+disponível, a lista apresenta um fallback localizado e honesto, sem inferir o
+autor de outro recurso.
+
+A linha secundária combina autor, badge textual de origem e branch ou trajeto
+da PR. A idade relativa à direita continua sendo exclusivamente o sinal de
+recência da atividade observada e não representa a duração. A terceira linha
+mostra a duração do último build sempre que ela estiver disponível. Quando uma
+execução exigir atenção, a etapa acionável para `failed`, `running`, `queued` ou
+`awaitingApproval` é combinada com essa duração na mesma linha. Sem duração,
+a etapa ainda é mostrada para esses estados; sem duração e sem etapa acionável,
+a terceira linha não é criada.
+
+Esta mudança reutiliza somente os metadados de commit, PR e tempo de execução
+já obtidos pelo monitoramento. Ela não adiciona chamadas de rede, escopos,
+permissões ou persistência. O nome, o fallback e a duração devem permanecer
+disponíveis para VoiceOver, e as cores dos badges continuam complementares à
+identificação textual.

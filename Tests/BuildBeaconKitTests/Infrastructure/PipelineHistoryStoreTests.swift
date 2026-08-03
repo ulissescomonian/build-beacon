@@ -16,6 +16,25 @@ final class PipelineHistoryStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(decoded.origin, PipelineRunOrigin.unknown)
     }
 
+    func testPipelineRunDecodesLegacyPullRequestContextWithoutAuthorName() throws {
+        let original = PipelineRun(
+            id: PipelineRunID(rawValue: "legacy-pr"),
+            buildNumber: 42,
+            phase: .succeeded,
+            pullRequest: PipelinePullRequestContext(id: 17, title: "Legacy PR", state: "OPEN")
+        )
+        let encoded = try JSONEncoder().encode(original)
+        var record = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var pullRequest = try XCTUnwrap(record["pullRequest"] as? [String: Any])
+        pullRequest.removeValue(forKey: "authorName")
+        record["pullRequest"] = pullRequest
+
+        let decoded = try JSONDecoder().decode(PipelineRun.self, from: JSONSerialization.data(withJSONObject: record))
+
+        XCTAssertEqual(decoded.pullRequest?.id, 17)
+        XCTAssertNil(decoded.pullRequest?.authorName)
+    }
+
     func testRecordsSanitizedEntryAndUpsertsSameRun() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

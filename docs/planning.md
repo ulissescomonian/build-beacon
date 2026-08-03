@@ -2058,3 +2058,64 @@ Validações do incremento:
 | `git diff --check` | aprovado |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.25 Incremento a implementar: autoria e contexto acionável na lista
+
+Escopo e ownership:
+
+- domínio e API: reutilizar apenas o autor já disponível no contexto de PR ou
+  de commit, sem nova chamada, escopo, permissão ou persistência;
+- contrato de apresentação: para `pullRequest`, escolher somente o autor da
+  PR; para `branch`, somente o autor do commit; para `unknown`, não apresentar
+  uma identidade inferida;
+- UI e localização: substituir o workspace na linha resumida por autor,
+  fallback localizado quando uma origem conhecida não tiver autor, e manter o
+  workspace somente no detalhe; preservar a idade relativa à direita como
+  recência e mostrar na terceira linha a duração do último build quando
+  disponível, combinada à etapa contextual para `failed`, `running`, `queued`
+  e `awaitingApproval`;
+- testes: cobrir precedência de autor por origem, fallback, ausência de autor
+  em origem desconhecida, remoção do workspace da lista, preservação no
+  detalhe, condições da terceira linha, VoiceOver e en/pt-BR;
+- documentação e integração: manter esta decisão, o README e os critérios de
+  aceite alinhados ao contrato, sem atualizar contagens de validação antes dos
+  gates.
+
+Critérios de aceite:
+
+- uma execução de PR mostra apenas o autor da PR, sem substituí-lo pelo autor
+  do commit;
+- uma execução de branch mostra apenas o autor do commit, sem usar contexto de
+  PR associado;
+- origem `unknown` não mostra identidade inferida; origem conhecida sem autor
+  mostra fallback localizado explícito;
+- o workspace não aparece na linha resumida, mas permanece presente no detalhe
+  e nas superfícies de configuração;
+- a idade relativa à direita permanece o sinal de recência e não é reutilizada
+  como duração;
+- duração disponível aparece na terceira linha, inclusive em uma execução
+  saudável; duração ausente não gera texto substituto enganoso;
+- quando houver etapa acionável e duração, ambas compartilham uma terceira
+  linha legível; sem duração, a etapa continua presente para falha, execução,
+  fila ou espera de aprovação; sem os dois valores, a terceira linha não é
+  criada;
+- texto, não apenas cor, comunica origem, autoria e fallback à navegação por
+  teclado e VoiceOver;
+- o incremento não cria requests adicionais nem altera permissões ou dados
+  persistidos.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| `swift test --quiet` | 230 testes executados, 0 falhas; 1 Keychain opt-in omitido |
+| `swift build -c release` | aprovado |
+| localizações | en e pt-BR validados com `plutil` |
+| `git diff --check` | aprovado |
+| build universal e assinatura | `arm64` e `x86_64`, `codesign --verify --deep --strict` aprovados |
+| DMG e SHA-256 | artefato e sidecar verificados |
+| instalação local | Build Beacon build 4 instalado |
+| QA visual | autor correto de branch, fallback honesto de PR, duração e etapa combinadas, idade relativa separada |
+| revisões independentes | sem achados bloqueadores |
+
+Estado: entregue e aprovado para empacotamento Preview.

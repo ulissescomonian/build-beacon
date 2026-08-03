@@ -245,6 +245,13 @@
 "pipeline.origin.accessibility.branch" = "Branch pipeline";
 "pipeline.origin.accessibility.pullRequest" = "Pull request pipeline";
 "pipeline.origin.accessibility.pullRequest.format" = "Pull request number %lld";
+"pipeline.summary.author.unavailable" = "Author unavailable";
+"pipeline.summary.step.failed.format" = "Failed in %@";
+"pipeline.summary.step.running.format" = "Running %@";
+"pipeline.summary.step.approval.format" = "Awaiting approval in %@";
+"pipeline.summary.step.queued.format" = "Queued: %@";
+"pipeline.summary.accessibility.duration.format" = "Build duration: %@";
+"pipeline.summary.accessibility.age.format" = "Build age: %@";
 "Build Beacon notifications are working" = "Build Beacon notifications are working";
 "This is a test notification for the selected pipeline." = "This is a test notification for the selected pipeline.";
 "Open Build Beacon" = "Open Build Beacon";
