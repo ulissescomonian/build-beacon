@@ -1,4 +1,5 @@
 import BuildBeaconKit
+import Foundation
 import ServiceManagement
 import SwiftUI
 
@@ -6,6 +7,7 @@ public struct BuildBeaconSettingsView: View {
     @Bindable private var model: AppModel
     @State private var isRepositoryPickerPresented = false
     @State private var isClearHistoryConfirmationPresented = false
+    @State private var isConfiguringPullRequestActions = false
 
     public init(model: AppModel) {
         self.model = model
@@ -39,7 +41,13 @@ public struct BuildBeaconSettingsView: View {
             }
         }
         .onAppear { model.startIfNeeded() }
-        .task { _ = await model.refreshNotificationPermissionStatus() }
+        .task {
+            _ = await model.refreshNotificationPermissionStatus()
+            await model.refreshPullRequestActionConfigurationStatus()
+            if model.pullRequestActionEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                model.pullRequestActionEmail = model.configuration.account?.email ?? ""
+            }
+        }
     }
 
     private var account: some View {
@@ -57,6 +65,67 @@ public struct BuildBeaconSettingsView: View {
                     SecureField("API token", text: $model.token)
                     Button("Connect") { Task { _ = await model.connect() } }
                         .buttonStyle(.borderedProminent)
+                }
+            }
+
+            Section("Pull Request Actions") {
+                if case let .failed(error) = model.pullRequestActionSheetState {
+                    let display = PullRequestMergePresentation.error(error)
+                    Label(display.title, systemImage: display.symbolName)
+                        .foregroundStyle(.red)
+                    Text(display.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Dismiss") {
+                        model.dismissPullRequestActionSheet()
+                    }
+                }
+                if model.pullRequestActionIsConfigured {
+                    LabeledContent("Status", value: "Enabled")
+                    Text("Approve and merge is available only on monitors you explicitly enable below. Build Beacon never merges automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Disconnect Actions Token", role: .destructive) {
+                        Task { await model.disconnectPullRequestActions() }
+                    }
+                    .disabled(model.isPullRequestActionBusy)
+                } else {
+                    Text("Use a separate Bitbucket token with these exact scopes: read:user:bitbucket, read:pullrequest:bitbucket, and write:pullrequest:bitbucket. Monitoring keeps using the existing read-only token.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField("Actions token account email", text: $model.pullRequestActionEmail)
+                    SecureField("Pull request actions token", text: $model.pullRequestActionToken)
+                    LabeledContent("Required scopes") {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("read:user:bitbucket")
+                            Text("read:pullrequest:bitbucket")
+                            Text("write:pullrequest:bitbucket")
+                        }
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                    }
+                    Text("Action Mode also requires pull request read permission on the existing monitoring token so the dashboard can identify eligible pull requests.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Enable Pull Request Actions") {
+                        isConfiguringPullRequestActions = true
+                        Task {
+                            _ = await model.configurePullRequestActions()
+                            isConfiguringPullRequestActions = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        !model.isConnected
+                            || model.pullRequestActionEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || model.pullRequestActionToken.isEmpty
+                            || model.isPullRequestActionBusy
+                            || isConfiguringPullRequestActions
+                    )
+                    if isConfiguringPullRequestActions {
+                        ProgressView("Validating actions token…")
+                            .controlSize(.small)
+                    }
                 }
             }
         }
@@ -131,17 +200,28 @@ public struct BuildBeaconSettingsView: View {
                             Text("\(monitor.workspaceName) · \(monitor.id.target.displayName)")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Toggle("Production", isOn: Binding(
-                            get: { monitor.isProduction },
-                            set: { isProduction in
-                                Task { await model.setMonitorProduction(isProduction, for: monitor.id) }
-                            }
-                        ))
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 5) {
+                            Toggle("Production", isOn: Binding(
+                                get: { monitor.isProduction },
+                                set: { isProduction in
+                                    Task { await model.setMonitorProduction(isProduction, for: monitor.id) }
+                                }
+                            ))
+                            .accessibilityHint("Marks \(monitor.repositoryName) as a production monitor")
+
+                            Toggle("PR actions", isOn: Binding(
+                                get: { monitor.allowsPullRequestActions },
+                                set: { isAllowed in
+                                    Task { await model.setPullRequestActionsAllowed(isAllowed, for: monitor.id) }
+                                }
+                            ))
+                            .accessibilityHint("Allows confirmed approve and merge actions for \(monitor.repositoryName)")
+                            .disabled(!model.pullRequestActionIsConfigured)
+                        }
                         .toggleStyle(.switch)
                         .controlSize(.small)
-                        .accessibilityHint("Marks \(monitor.repositoryName) as a production monitor")
                         .disabled(model.isMutatingMonitors)
-                        Spacer()
                         Button(role: .destructive) {
                             Task { await model.removeMonitor(monitor.id) }
                         } label: {

@@ -8,9 +8,11 @@ public struct PipelineDetailView: View {
     let selectedHistory: [PipelineHistoryEntry]
     let notificationBuildNumber: Int?
     let approvalDetectedAt: Date?
+    let mergeReadiness: PullRequestMergeReadinessDisplay?
     let openPipeline: (MonitorObservation) -> Void
     let openNotificationBuild: (Int) -> Void
     let openApproval: () -> Void
+    let beginMerge: () -> Void
     let openCommit: (PipelineRun) -> Void
     let openPullRequest: (PipelinePullRequestContext) -> Void
 
@@ -20,9 +22,11 @@ public struct PipelineDetailView: View {
         selectedHistory: [PipelineHistoryEntry] = [],
         notificationBuildNumber: Int? = nil,
         approvalDetectedAt: Date? = nil,
+        mergeReadiness: PullRequestMergeReadinessDisplay? = nil,
         openURL: @escaping (MonitorObservation) -> Void,
         openNotificationBuild: @escaping (Int) -> Void = { _ in },
         openApproval: @escaping () -> Void = {},
+        beginMerge: @escaping () -> Void = {},
         openCommit: @escaping (PipelineRun) -> Void = { _ in },
         openPullRequest: @escaping (PipelinePullRequestContext) -> Void = { _ in }
     ) {
@@ -31,9 +35,11 @@ public struct PipelineDetailView: View {
         self.selectedHistory = selectedHistory
         self.notificationBuildNumber = notificationBuildNumber
         self.approvalDetectedAt = approvalDetectedAt
+        self.mergeReadiness = mergeReadiness
         openPipeline = openURL
         self.openNotificationBuild = openNotificationBuild
         self.openApproval = openApproval
+        self.beginMerge = beginMerge
         self.openCommit = openCommit
         self.openPullRequest = openPullRequest
     }
@@ -55,6 +61,8 @@ public struct PipelineDetailView: View {
                     runMetadata(run)
                     if PipelineDetailPresentation.shouldShowApprovalAction(for: run) {
                         approvalRequiredCard(run)
+                    } else if let mergeReadiness, mergeReadiness.isReady {
+                        readyToMergeCard(mergeReadiness)
                     }
                     if PipelineDetailPresentation.shouldShowNotificationBuildCallout(
                         notificationBuildNumber: notificationBuildNumber,
@@ -93,6 +101,20 @@ public struct PipelineDetailView: View {
                     Label("Open approval in Bitbucket", systemImage: "checkmark.circle")
                 }
                 .accessibilityHint("Opens the pending build approval in Bitbucket")
+            } else if let mergeReadiness,
+                      let target = mergeReadiness.target {
+                Button {
+                    beginMerge()
+                } label: {
+                    Label("Approve and merge…", systemImage: "arrow.triangle.merge")
+                }
+                .accessibilityLabel(
+                    PullRequestMergePresentation.actionAccessibilityLabel(
+                        target: target,
+                        repositoryName: observation.monitor.repositoryName
+                    )
+                )
+                .accessibilityHint("Opens a confirmation. Nothing is merged until you confirm.")
             }
         }
     }
@@ -184,6 +206,36 @@ public struct PipelineDetailView: View {
         }
         .padding(12)
         .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func readyToMergeCard(_ display: PullRequestMergeReadinessDisplay) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "arrow.triangle.merge")
+                .foregroundStyle(.green)
+                .font(.title2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("Ready to merge")
+                        .font(.body.weight(.semibold))
+                    if observation.monitor.isProduction {
+                        ProductionDetailBadge()
+                    }
+                }
+                Text(display.detail ?? "All merge prerequisites are available.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("Approve and merge…") {
+                beginMerge()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.green)
+            .accessibilityHint("Opens a confirmation. Nothing is merged until you confirm.")
+        }
+        .padding(12)
+        .background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .contain)
     }
 

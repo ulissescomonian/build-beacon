@@ -1,7 +1,8 @@
 # Build Beacon contributor guide
 
-Build Beacon is a native macOS application for read-only Bitbucket pipeline
-monitoring. Keep every change focused on a polished, reliable macOS experience;
+Build Beacon is a native macOS application for Bitbucket pipeline monitoring
+that remains read-only by default. Keep every change focused on a polished,
+reliable macOS experience;
 do not introduce a web shell, a cross-platform runtime, or a UI implementation
 that bypasses AppKit/SwiftUI conventions.
 
@@ -77,9 +78,21 @@ tracks an artifact outside Git.
 
 ## Security, privacy, and data handling
 
-- Build Beacon is read-only. Request the narrowest Bitbucket scopes and never
-  add write, mutation, repository administration, or Git credential behavior
-  without an explicit product decision recorded in documentation.
+- Build Beacon monitoring is read-only by default. The only approved remote
+  mutation is the isolated, foreground-only, per-monitor opt-in `Approve and
+  merge` flow for an open, non-draft pull request whose current source HEAD is
+  the commit of a succeeded monitored build. It uses a second Keychain token
+  with exactly `read:user:bitbucket`, `read:pullrequest:bitbucket` and
+  `write:pullrequest:bitbucket`; identity is validated before any mutation.
+  Action Mode also requires `read:pullrequest:bitbucket` on the read-only
+  monitoring token. Two fresh remote preflights validate the exact pipeline via
+  the monitoring credential and PR/HEAD via the action credential, one before
+  each POST. Every action requires explicit confirmation, publishes its real
+  progress, and closes every post-mutation ambiguity as `unknown`, without
+  retry. It never runs from polling, background work, notifications or deep
+  links. Never add another write action, automerge,
+  repository administration or Git credential behavior without a new explicit
+  product decision recorded in documentation.
 - Use HTTPS for remote requests, validate server responses defensively, honor
   rate limits and retry guidance, and avoid exposing tokens or raw API errors in
   the UI, logs, notifications, tests, or crash reports.

@@ -249,25 +249,280 @@ public struct PipelineCommitContext: Hashable, Codable, Sendable {
     }
 }
 
+public enum PullRequestMergeStrategy: String, Hashable, Codable, Sendable, CaseIterable {
+    case mergeCommit = "merge_commit"
+    case squash
+    case fastForward = "fast_forward"
+}
+
 public struct PipelinePullRequestContext: Hashable, Codable, Sendable {
     public let id: Int
     public let title: String
     public let state: String
     public let authorName: String?
     public let webURL: URL?
+    public let sourceCommitHash: String?
+    public let isDraft: Bool
+    public let availableMergeStrategies: [PullRequestMergeStrategy]
+    public let defaultMergeStrategy: PullRequestMergeStrategy?
+    public let closeSourceBranch: Bool
 
     public init(
         id: Int,
         title: String,
         state: String,
         authorName: String? = nil,
-        webURL: URL? = nil
+        webURL: URL? = nil,
+        sourceCommitHash: String? = nil,
+        isDraft: Bool = false,
+        availableMergeStrategies: [PullRequestMergeStrategy] = [],
+        defaultMergeStrategy: PullRequestMergeStrategy? = nil,
+        closeSourceBranch: Bool = false
     ) {
         self.id = id
         self.title = title
         self.state = state
         self.authorName = authorName
         self.webURL = webURL
+        self.sourceCommitHash = sourceCommitHash
+        self.isDraft = isDraft
+        self.availableMergeStrategies = availableMergeStrategies
+        self.defaultMergeStrategy = defaultMergeStrategy
+        self.closeSourceBranch = closeSourceBranch
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, state, authorName, webURL, sourceCommitHash, isDraft
+        case availableMergeStrategies, defaultMergeStrategy, closeSourceBranch
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(Int.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        state = try values.decode(String.self, forKey: .state)
+        authorName = try values.decodeIfPresent(String.self, forKey: .authorName)
+        webURL = try values.decodeIfPresent(URL.self, forKey: .webURL)
+        sourceCommitHash = try values.decodeIfPresent(String.self, forKey: .sourceCommitHash)
+        isDraft = try values.decodeIfPresent(Bool.self, forKey: .isDraft) ?? false
+        availableMergeStrategies = try values.decodeIfPresent(
+            [PullRequestMergeStrategy].self,
+            forKey: .availableMergeStrategies
+        ) ?? []
+        defaultMergeStrategy = try values.decodeIfPresent(
+            PullRequestMergeStrategy.self,
+            forKey: .defaultMergeStrategy
+        )
+        closeSourceBranch = try values.decodeIfPresent(Bool.self, forKey: .closeSourceBranch) ?? false
+    }
+}
+
+public struct PullRequestActionTarget: Hashable, Codable, Sendable {
+    public let accountID: AccountID
+    public let monitorID: MonitorID
+    public let workspaceSlug: String
+    public let repositorySlug: String
+    public let pullRequestID: Int
+    public let runID: PipelineRunID
+    public let buildNumber: Int
+    public let expectedSourceCommitHash: String
+    public let sourceBranch: String
+    public let destinationBranch: String
+    public let isProduction: Bool
+
+    public init(
+        accountID: AccountID,
+        monitorID: MonitorID,
+        workspaceSlug: String,
+        repositorySlug: String,
+        pullRequestID: Int,
+        runID: PipelineRunID,
+        buildNumber: Int,
+        expectedSourceCommitHash: String,
+        sourceBranch: String,
+        destinationBranch: String,
+        isProduction: Bool
+    ) {
+        self.accountID = accountID
+        self.monitorID = monitorID
+        self.workspaceSlug = workspaceSlug
+        self.repositorySlug = repositorySlug
+        self.pullRequestID = pullRequestID
+        self.runID = runID
+        self.buildNumber = buildNumber
+        self.expectedSourceCommitHash = expectedSourceCommitHash
+        self.sourceBranch = sourceBranch
+        self.destinationBranch = destinationBranch
+        self.isProduction = isProduction
+    }
+}
+
+public struct PullRequestMergePreflight: Hashable, Codable, Sendable {
+    public let target: PullRequestActionTarget
+    public let title: String
+    public let webURL: URL?
+    public let availableStrategies: [PullRequestMergeStrategy]
+    public let defaultStrategy: PullRequestMergeStrategy
+    public let closeSourceBranch: Bool
+    public let alreadyApproved: Bool
+
+    public init(
+        target: PullRequestActionTarget,
+        title: String,
+        webURL: URL? = nil,
+        availableStrategies: [PullRequestMergeStrategy],
+        defaultStrategy: PullRequestMergeStrategy,
+        closeSourceBranch: Bool,
+        alreadyApproved: Bool
+    ) {
+        self.target = target
+        self.title = title
+        self.webURL = webURL
+        self.availableStrategies = availableStrategies
+        self.defaultStrategy = defaultStrategy
+        self.closeSourceBranch = closeSourceBranch
+        self.alreadyApproved = alreadyApproved
+    }
+}
+
+public enum PullRequestApprovedButNotMergedReason: String, Hashable, Codable, Sendable {
+    case mergeChecksPending
+    case mergeConflict
+    case independentApprovalRequired
+    case branchRestriction
+    case pullRequestClosed
+    case sourceHeadChanged
+    case pipelineNotSuccessful
+    case validationUnavailable
+    case providerRejected
+}
+
+public enum PullRequestMergeOutcome: Hashable, Codable, Sendable {
+    case merged(mergeCommitHash: String?)
+    case approvedButNotMerged(reason: PullRequestApprovedButNotMergedReason)
+    case outcomeUnknown
+}
+
+/// Stable, sanitized failures safe for localization and presentation. Raw API
+/// bodies, credentials, URLs, and provider messages must never cross this boundary.
+public enum PullRequestActionError: Error, Hashable, Codable, Sendable {
+    case notConfigured
+    case accountMismatch
+    case invalidTarget
+    case staleRun
+    case pullRequestNotOpen
+    case sourceHeadChanged
+    case pipelineNotSuccessful
+    case approvalRejected
+    case mergeChecksPending
+    case mergeConflict
+    case independentApprovalRequired
+    case branchRestriction
+    case invalidCredentials
+    case insufficientPermissions
+    case rateLimited(retryAt: Date?)
+    case offline
+    case timedOut
+    case temporarilyUnavailable
+    case malformedResponse
+    case cancelled
+    case outcomeUnknown
+}
+
+public enum PullRequestActionOperationPhase: String, Hashable, Codable, Sendable {
+    case idle
+    case preflighting
+    case awaitingConfirmation
+    case revalidatingBeforeApproval
+    case approving
+    case revalidatingBeforeMerge
+    case merging
+    case waitingForProvider
+    case completed
+    case blocked
+    case failed
+}
+
+public enum PullRequestActionSheetState: Hashable, Codable, Sendable {
+    case hidden
+    case loading(target: PullRequestActionTarget)
+    case confirmation(preflight: PullRequestMergePreflight)
+    case executing(preflight: PullRequestMergePreflight, phase: PullRequestActionOperationPhase)
+    case completed(outcome: PullRequestMergeOutcome)
+    case failed(error: PullRequestActionError)
+}
+
+public enum PullRequestMergeIneligibility: String, Hashable, Codable, Sendable {
+    case actionsDisabled
+    case staleObservation
+    case noPipelineRun
+    case pipelineNotSuccessful
+    case notPullRequestPipeline
+    case missingPullRequestContext
+    case pullRequestIdentityMismatch
+    case pullRequestNotOpen
+    case draftPullRequest
+    case missingSourceCommit
+    case sourceHeadChanged
+    case missingBranchIdentity
+    case invalidBuildNumber
+}
+
+public enum PullRequestMergeEligibility: Hashable, Codable, Sendable {
+    case eligible(target: PullRequestActionTarget)
+    case ineligible(reason: PullRequestMergeIneligibility)
+}
+
+public enum PullRequestMergeEligibilityEvaluator {
+    public static func evaluate(_ observation: MonitorObservation) -> PullRequestMergeEligibility {
+        let monitor = observation.monitor
+        guard monitor.allowsPullRequestActions else { return .ineligible(reason: .actionsDisabled) }
+        guard observation.currentFailure == nil else { return .ineligible(reason: .staleObservation) }
+        guard let run = observation.lastKnownRun else { return .ineligible(reason: .noPipelineRun) }
+        guard run.phase == .succeeded else { return .ineligible(reason: .pipelineNotSuccessful) }
+        guard case let .pullRequest(originID, originSource, originDestination) = run.origin,
+              let pullRequestID = originID,
+              pullRequestID > 0 else {
+            return .ineligible(reason: .notPullRequestPipeline)
+        }
+        guard let context = run.pullRequest else { return .ineligible(reason: .missingPullRequestContext) }
+        guard context.id == pullRequestID else { return .ineligible(reason: .pullRequestIdentityMismatch) }
+        guard normalized(context.state) == "OPEN" else { return .ineligible(reason: .pullRequestNotOpen) }
+        guard !context.isDraft else { return .ineligible(reason: .draftPullRequest) }
+        guard let pipelineCommit = nonempty(run.commitHash)?.lowercased(),
+              let sourceCommit = nonempty(context.sourceCommitHash)?.lowercased() else {
+            return .ineligible(reason: .missingSourceCommit)
+        }
+        guard pipelineCommit == sourceCommit else { return .ineligible(reason: .sourceHeadChanged) }
+        guard let sourceBranch = nonempty(originSource),
+              let destinationBranch = nonempty(originDestination) else {
+            return .ineligible(reason: .missingBranchIdentity)
+        }
+        guard run.buildNumber > 0 else { return .ineligible(reason: .invalidBuildNumber) }
+
+        return .eligible(target: PullRequestActionTarget(
+            accountID: monitor.id.accountID,
+            monitorID: monitor.id,
+            workspaceSlug: monitor.workspaceSlug,
+            repositorySlug: monitor.repositorySlug,
+            pullRequestID: pullRequestID,
+            runID: run.id,
+            buildNumber: run.buildNumber,
+            expectedSourceCommitHash: pipelineCommit,
+            sourceBranch: sourceBranch,
+            destinationBranch: destinationBranch,
+            isProduction: monitor.isProduction
+        ))
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+
+    private static func nonempty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        return value
     }
 }
 
@@ -337,6 +592,7 @@ public struct MonitorConfiguration: Identifiable, Hashable, Codable, Sendable {
     /// Production is an explicit monitor decision. Branch names are deliberately
     /// not inferred because main/master are not universally production targets.
     public var isProduction: Bool
+    public var allowsPullRequestActions: Bool
 
     /// The persisted `isPinned` key predates the user-facing favorite control.
     /// Keep it as the storage-compatible source of truth.
@@ -354,7 +610,8 @@ public struct MonitorConfiguration: Identifiable, Hashable, Codable, Sendable {
         projectName: String? = nil,
         isPinned: Bool = false,
         isHidden: Bool = false,
-        isProduction: Bool = false
+        isProduction: Bool = false,
+        allowsPullRequestActions: Bool = false
     ) {
         self.id = id
         self.workspaceSlug = workspaceSlug
@@ -365,10 +622,11 @@ public struct MonitorConfiguration: Identifiable, Hashable, Codable, Sendable {
         self.isPinned = isPinned
         self.isHidden = isHidden
         self.isProduction = isProduction
+        self.allowsPullRequestActions = allowsPullRequestActions
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, workspaceSlug, workspaceName, repositorySlug, repositoryName, projectName, isPinned, isHidden, isProduction
+        case id, workspaceSlug, workspaceName, repositorySlug, repositoryName, projectName, isPinned, isHidden, isProduction, allowsPullRequestActions
     }
 
     public init(from decoder: Decoder) throws {
@@ -382,6 +640,7 @@ public struct MonitorConfiguration: Identifiable, Hashable, Codable, Sendable {
         isPinned = try values.decode(Bool.self, forKey: .isPinned)
         isHidden = try values.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
         isProduction = try values.decodeIfPresent(Bool.self, forKey: .isProduction) ?? false
+        allowsPullRequestActions = try values.decodeIfPresent(Bool.self, forKey: .allowsPullRequestActions) ?? false
     }
 }
 
@@ -506,7 +765,7 @@ public struct AccountCredential: Sendable, CustomStringConvertible {
 }
 
 public struct AppConfiguration: Hashable, Codable, Sendable {
-    public static let schemaVersion = 4
+    public static let schemaVersion = 5
 
     public var account: AccountProfile?
     public var monitors: [MonitorConfiguration]
@@ -686,6 +945,41 @@ public protocol BitbucketService: Sendable {
     func listRepositories(in workspace: WorkspaceInfo, accountID: AccountID) async throws -> [RepositoryInfo]
     func listBranches(in repository: RepositoryInfo, accountID: AccountID) async throws -> [BranchInfo]
     func latestPipeline(for monitor: MonitorConfiguration) async throws -> PipelineRun?
+}
+
+/// Revalidates the exact pipeline evidence through the monitoring credential.
+/// The action token deliberately has no pipeline scope.
+public protocol PullRequestActionRunValidating: Sendable {
+    func validatePullRequestActionRun(_ target: PullRequestActionTarget) async throws
+}
+
+/// Write-capable pull request actions are deliberately isolated from the
+/// read-only monitoring service and credential lifecycle.
+public protocol PullRequestActionServicing: Sendable {
+    var isConfigured: Bool { get async }
+    func configure(_ credential: AccountCredential, expectedAccountID: AccountID) async throws
+    func disconnectPullRequestActions() async throws
+    func preflight(_ target: PullRequestActionTarget) async throws -> PullRequestMergePreflight
+    func approveAndMerge(
+        _ preflight: PullRequestMergePreflight,
+        strategy: PullRequestMergeStrategy
+    ) async throws -> PullRequestMergeOutcome
+    func approveAndMerge(
+        _ preflight: PullRequestMergePreflight,
+        strategy: PullRequestMergeStrategy,
+        progress: @escaping @Sendable (PullRequestActionOperationPhase) async -> Void
+    ) async throws -> PullRequestMergeOutcome
+}
+
+public extension PullRequestActionServicing {
+    func approveAndMerge(
+        _ preflight: PullRequestMergePreflight,
+        strategy: PullRequestMergeStrategy,
+        progress: @escaping @Sendable (PullRequestActionOperationPhase) async -> Void
+    ) async throws -> PullRequestMergeOutcome {
+        await progress(.approving)
+        return try await approveAndMerge(preflight, strategy: strategy)
+    }
 }
 
 public enum NotificationEventKind: String, Hashable, Codable, Sendable {

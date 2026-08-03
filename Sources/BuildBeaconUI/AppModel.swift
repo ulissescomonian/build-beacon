@@ -2,6 +2,27 @@ import BuildBeaconKit
 import Foundation
 import Observation
 
+private actor UnavailablePullRequestActionService: PullRequestActionServicing {
+    var isConfigured: Bool { false }
+
+    func configure(_ credential: AccountCredential, expectedAccountID: AccountID) async throws {
+        throw PullRequestActionError.notConfigured
+    }
+
+    func disconnectPullRequestActions() async throws {}
+
+    func preflight(_ target: PullRequestActionTarget) async throws -> PullRequestMergePreflight {
+        throw PullRequestActionError.notConfigured
+    }
+
+    func approveAndMerge(
+        _ preflight: PullRequestMergePreflight,
+        strategy: PullRequestMergeStrategy
+    ) async throws -> PullRequestMergeOutcome {
+        throw PullRequestActionError.notConfigured
+    }
+}
+
 @MainActor
 private final class ConfigurationPersistenceResult {
     var error: (any Error)?
@@ -49,6 +70,7 @@ public protocol BuildBeaconRuntime: AnyObject {
 @Observable
 public final class AppModel {
     private let runtime: any BuildBeaconRuntime
+    private let pullRequestActions: any PullRequestActionServicing
     /// Startup belongs to the application model, rather than to any transient SwiftUI view.
     /// A menu-bar window can disappear while the user opens Settings, so a view-owned
     /// `.task` is not a reliable owner for loading the account and its workspaces.
@@ -81,6 +103,10 @@ public final class AppModel {
     private var pendingFavoritePersistenceCount = 0
     private var favoriteMutationGeneration: [MonitorID: Int] = [:]
     private var confirmedFavoriteState: [MonitorID: Bool] = [:]
+    private var pullRequestActionGeneration = 0
+    private var pullRequestActionTask: Task<Void, Never>?
+    private var activePullRequestActionTarget: PullRequestActionTarget?
+    private var pullRequestActionMutationConfirmed = false
 
     public var configuration = AppConfiguration()
     public var snapshot: MonitoringSnapshot?
@@ -114,9 +140,25 @@ public final class AppModel {
     public var monitorPresentation = MonitorPresentationPreferences()
     public var historyEnabled = true
     public private(set) var approvalReminderInterval: ApprovalReminderInterval = .none
+    public private(set) var pullRequestActionIsConfigured = false
+    public var pullRequestActionEmail = ""
+    public var pullRequestActionToken = ""
+    public private(set) var pullRequestActionSheetState: PullRequestActionSheetState = .hidden
 
-    public init(runtime: any BuildBeaconRuntime) {
+    public var isPullRequestActionBusy: Bool { pullRequestActionTask != nil }
+
+    public init(
+        runtime: any BuildBeaconRuntime,
+        pullRequestActions: (any PullRequestActionServicing)? = nil
+    ) {
         self.runtime = runtime
+        if let pullRequestActions {
+            self.pullRequestActions = pullRequestActions
+        } else if let runtimeActions = runtime as? any PullRequestActionServicing {
+            self.pullRequestActions = runtimeActions
+        } else {
+            self.pullRequestActions = UnavailablePullRequestActionService()
+        }
     }
 
     public var isConnected: Bool { configuration.account != nil }
@@ -552,6 +594,168 @@ public final class AppModel {
         } catch {
             errorMessage = Self.message(for: error)
         }
+    }
+
+    @discardableResult
+    public func refreshPullRequestActionConfigurationStatus() async -> Bool {
+        pullRequestActionIsConfigured = await pullRequestActions.isConfigured
+        return pullRequestActionIsConfigured
+    }
+
+    @discardableResult
+    public func configurePullRequestActions() async -> Bool {
+        guard let accountID = configuration.account?.id else {
+            pullRequestActionToken = ""
+            pullRequestActionSheetState = .failed(error: .accountMismatch)
+            return false
+        }
+        let submittedEmail = pullRequestActionEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let submittedToken = pullRequestActionToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        pullRequestActionToken = ""
+        guard !submittedEmail.isEmpty, !submittedToken.isEmpty else {
+            pullRequestActionSheetState = .failed(error: .invalidTarget)
+            return false
+        }
+        do {
+            try await pullRequestActions.configure(
+                AccountCredential(email: submittedEmail, token: submittedToken),
+                expectedAccountID: accountID
+            )
+            pullRequestActionIsConfigured = await pullRequestActions.isConfigured
+            if pullRequestActionIsConfigured {
+                pullRequestActionSheetState = .hidden
+            } else {
+                pullRequestActionSheetState = .failed(error: .notConfigured)
+            }
+            return pullRequestActionIsConfigured
+        } catch {
+            pullRequestActionIsConfigured = await pullRequestActions.isConfigured
+            pullRequestActionSheetState = .failed(error: Self.pullRequestActionError(from: error))
+            return false
+        }
+    }
+
+    public func disconnectPullRequestActions() async {
+        cancelPullRequestAction()
+        do {
+            try await pullRequestActions.disconnectPullRequestActions()
+            pullRequestActionIsConfigured = false
+            pullRequestActionSheetState = .hidden
+        } catch {
+            pullRequestActionIsConfigured = await pullRequestActions.isConfigured
+            pullRequestActionSheetState = .failed(error: Self.pullRequestActionError(from: error))
+        }
+        pullRequestActionToken = ""
+    }
+
+    public func setPullRequestActionsAllowed(_ allowed: Bool, for monitorID: MonitorID) async {
+        guard let index = configuration.monitors.firstIndex(where: { $0.id == monitorID }),
+              configuration.monitors[index].allowsPullRequestActions != allowed else { return }
+        let previous = configuration
+        configuration.monitors[index].allowsPullRequestActions = allowed
+        reconcileSnapshotWithCurrentConfiguration()
+        do {
+            try await persistCurrentConfiguration { [weak self] in
+                self?.apply(configuration: previous)
+            }
+        } catch {
+            errorMessage = Self.message(for: error)
+        }
+    }
+
+    public func pullRequestMergeEligibility(
+        for observation: MonitorObservation
+    ) -> PullRequestMergeEligibility {
+        PullRequestMergeEligibilityEvaluator.evaluate(observation)
+    }
+
+    /// Captures an immutable action target from the selected successful PR run.
+    /// The only effect here is a user-initiated preflight read.
+    @discardableResult
+    public func beginPullRequestAction(
+        for observation: MonitorObservation
+    ) -> Task<Void, Never>? {
+        guard pullRequestActionTask == nil,
+              activePullRequestActionTarget == nil else { return nil }
+        guard pullRequestActionIsConfigured else {
+            pullRequestActionSheetState = .failed(error: .notConfigured)
+            return nil
+        }
+        let eligibility = pullRequestMergeEligibility(for: observation)
+        guard case let .eligible(target) = eligibility else {
+            pullRequestActionSheetState = .failed(
+                error: Self.pullRequestActionError(from: eligibility)
+            )
+            return nil
+        }
+
+        pullRequestActionGeneration += 1
+        let generation = pullRequestActionGeneration
+        activePullRequestActionTarget = target
+        pullRequestActionMutationConfirmed = false
+        pullRequestActionSheetState = .loading(target: target)
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runPullRequestPreflight(target: target, generation: generation)
+        }
+        pullRequestActionTask = task
+        return task
+    }
+
+    /// Confirms only the exact preflight currently presented. The current local
+    /// snapshot is re-evaluated before the write-capable service is called.
+    @discardableResult
+    public func confirmPullRequestAction(
+        strategy: PullRequestMergeStrategy
+    ) -> Task<Void, Never>? {
+        guard pullRequestActionTask == nil,
+              case let .confirmation(preflight) = pullRequestActionSheetState,
+              activePullRequestActionTarget == preflight.target,
+              preflight.availableStrategies.contains(strategy) else { return nil }
+        guard let observation = snapshot?.observations[preflight.target.monitorID],
+              case let .eligible(currentTarget) = pullRequestMergeEligibility(for: observation),
+              currentTarget == preflight.target else {
+            activePullRequestActionTarget = nil
+            pullRequestActionSheetState = .failed(error: .staleRun)
+            return nil
+        }
+
+        pullRequestActionGeneration += 1
+        let generation = pullRequestActionGeneration
+        pullRequestActionMutationConfirmed = true
+        pullRequestActionSheetState = .executing(
+            preflight: preflight,
+            phase: .revalidatingBeforeApproval
+        )
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runApproveAndMerge(
+                preflight: preflight,
+                strategy: strategy,
+                generation: generation
+            )
+        }
+        pullRequestActionTask = task
+        return task
+    }
+
+    public func cancelPullRequestAction() {
+        let mutationMayHaveStarted = pullRequestActionMutationConfirmed && pullRequestActionTask != nil
+        pullRequestActionGeneration += 1
+        pullRequestActionTask?.cancel()
+        pullRequestActionTask = nil
+        activePullRequestActionTarget = nil
+        pullRequestActionMutationConfirmed = false
+        pullRequestActionSheetState = mutationMayHaveStarted
+            ? .failed(error: .outcomeUnknown)
+            : .hidden
+    }
+
+    public func dismissPullRequestActionSheet() {
+        guard pullRequestActionTask == nil else { return }
+        activePullRequestActionTarget = nil
+        pullRequestActionMutationConfirmed = false
+        pullRequestActionSheetState = .hidden
     }
 
     public func saveNotificationPreferences() async {
@@ -1151,6 +1355,127 @@ public final class AppModel {
         )
     }
 
+    private func runPullRequestPreflight(
+        target: PullRequestActionTarget,
+        generation: Int
+    ) async {
+        do {
+            let preflight = try await pullRequestActions.preflight(target)
+            guard pullRequestActionGeneration == generation,
+                  !Task.isCancelled else { return }
+            guard preflight.target == target else {
+                activePullRequestActionTarget = nil
+                pullRequestActionSheetState = .failed(error: .staleRun)
+                pullRequestActionTask = nil
+                return
+            }
+            pullRequestActionSheetState = .confirmation(preflight: preflight)
+        } catch {
+            guard pullRequestActionGeneration == generation else { return }
+            activePullRequestActionTarget = nil
+            pullRequestActionSheetState = .failed(error: Self.pullRequestActionError(from: error))
+        }
+        if pullRequestActionGeneration == generation {
+            pullRequestActionTask = nil
+        }
+    }
+
+    private func runApproveAndMerge(
+        preflight: PullRequestMergePreflight,
+        strategy: PullRequestMergeStrategy,
+        generation: Int
+    ) async {
+        guard pullRequestActionGeneration == generation,
+              !Task.isCancelled else { return }
+        pullRequestActionSheetState = .executing(
+            preflight: preflight,
+            phase: .revalidatingBeforeApproval
+        )
+        do {
+            let outcome = try await pullRequestActions.approveAndMerge(
+                preflight,
+                strategy: strategy
+            ) { [weak self] phase in
+                await self?.publishPullRequestActionPhase(
+                    phase,
+                    preflight: preflight,
+                    generation: generation
+                )
+            }
+            guard pullRequestActionGeneration == generation,
+                  !Task.isCancelled else { return }
+            pullRequestActionSheetState = .completed(outcome: outcome)
+            pullRequestActionTask = nil
+            pullRequestActionMutationConfirmed = false
+            await refresh(reason: .manual)
+        } catch {
+            guard pullRequestActionGeneration == generation else { return }
+            let actionError = Self.pullRequestActionError(from: error)
+            activePullRequestActionTarget = nil
+            pullRequestActionSheetState = .failed(error: actionError)
+            pullRequestActionTask = nil
+            pullRequestActionMutationConfirmed = false
+            if actionError == .outcomeUnknown {
+                await refresh(reason: .manual)
+            }
+        }
+    }
+
+    private func publishPullRequestActionPhase(
+        _ phase: PullRequestActionOperationPhase,
+        preflight: PullRequestMergePreflight,
+        generation: Int
+    ) {
+        guard pullRequestActionGeneration == generation,
+              pullRequestActionTask != nil,
+              !Task.isCancelled else { return }
+        pullRequestActionSheetState = .executing(preflight: preflight, phase: phase)
+    }
+
+    private static func pullRequestActionError(from error: any Error) -> PullRequestActionError {
+        if let actionError = error as? PullRequestActionError { return actionError }
+        if error is CancellationError { return .cancelled }
+        if let provider = error as? any ObservationFailureProviding {
+            return pullRequestActionError(from: provider.observationFailure)
+        }
+        if let failure = error as? ObservationFailure {
+            return pullRequestActionError(from: failure)
+        }
+        return .temporarilyUnavailable
+    }
+
+    private static func pullRequestActionError(
+        from eligibility: PullRequestMergeEligibility
+    ) -> PullRequestActionError {
+        guard case let .ineligible(reason) = eligibility else { return .invalidTarget }
+        return switch reason {
+        case .staleObservation, .noPipelineRun: .staleRun
+        case .pipelineNotSuccessful: .pipelineNotSuccessful
+        case .pullRequestNotOpen: .pullRequestNotOpen
+        case .sourceHeadChanged: .sourceHeadChanged
+        case .actionsDisabled, .notPullRequestPipeline, .missingPullRequestContext,
+                .pullRequestIdentityMismatch, .draftPullRequest, .missingSourceCommit,
+                .missingBranchIdentity, .invalidBuildNumber:
+            .invalidTarget
+        }
+    }
+
+    private static func pullRequestActionError(
+        from failure: ObservationFailure
+    ) -> PullRequestActionError {
+        switch failure {
+        case .invalidCredentials: .invalidCredentials
+        case .insufficientPermissions: .insufficientPermissions
+        case let .rateLimited(retryAt): .rateLimited(retryAt: retryAt)
+        case .offline: .offline
+        case .timedOut: .timedOut
+        case .cancelled: .cancelled
+        case .notFound, .malformedResponse: .malformedResponse
+        case .server: .temporarilyUnavailable
+        case .keychain, .persistence, .unexpected: .temporarilyUnavailable
+        }
+    }
+
     /// Account identifiers scope both snapshots and persisted markers. Do not compare
     /// an incoming account against a previous account's last run, even transiently.
     private func resetActivityBaselineForAccountChange() {
@@ -1167,6 +1492,14 @@ public final class AppModel {
         configurationPersistenceTask = nil
         favoriteMutationGeneration = [:]
         confirmedFavoriteState = [:]
+        pullRequestActionGeneration += 1
+        pullRequestActionTask?.cancel()
+        pullRequestActionTask = nil
+        activePullRequestActionTarget = nil
+        pullRequestActionMutationConfirmed = false
+        pullRequestActionSheetState = .hidden
+        pullRequestActionIsConfigured = false
+        pullRequestActionToken = ""
     }
 
     private static func preferredObservation(in snapshot: MonitoringSnapshot) -> MonitorObservation? {

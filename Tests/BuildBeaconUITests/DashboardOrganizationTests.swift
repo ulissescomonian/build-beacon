@@ -103,6 +103,34 @@ final class DashboardOrganizationTests: XCTestCase {
         XCTAssertEqual(sections.map(\.title), ["Alpha", "Beta"])
     }
 
+    func testPrioritizedSectionsPlacePipelineApprovalBeforeReadyToMerge() {
+        let approval = observation("approval", phase: .awaitingApproval)
+        let mergeReady = observation("ready", readyToMerge: true)
+        let healthy = observation("healthy", phase: .succeeded)
+
+        let sections = DashboardOrganization.prioritizedSections(
+            for: [healthy, mergeReady, approval],
+            grouping: .none
+        )
+
+        XCTAssertEqual(sections.map(\.id), ["approval-required", "ready-to-merge", "all-pipelines"])
+        XCTAssertEqual(sections[0].observations.map(\.monitor.repositoryName), ["approval"])
+        XCTAssertEqual(sections[1].observations.map(\.monitor.repositoryName), ["ready"])
+        XCTAssertEqual(sections[2].observations.map(\.monitor.repositoryName), ["healthy"])
+    }
+
+    func testReadyToMergeSectionIsHiddenWithoutActionsCredential() {
+        let mergeReady = observation("ready", readyToMerge: true)
+
+        let sections = DashboardOrganization.prioritizedSections(
+            for: [mergeReady],
+            grouping: .none,
+            pullRequestActionsConfigured: false
+        )
+
+        XCTAssertEqual(sections.map(\.id), ["all-pipelines"])
+    }
+
     func testProjectGroupingPlacesUnassignedInOwnSection() {
         let mobile = observation("mobile", project: "Mobile")
         let unassigned = observation("misc")
@@ -187,7 +215,8 @@ final class DashboardOrganizationTests: XCTestCase {
         phase: PipelinePhase? = nil,
         favorite: Bool = false,
         failure: ObservationFailure? = nil,
-        startedAt: Date? = nil
+        startedAt: Date? = nil,
+        readyToMerge: Bool = false
     ) -> MonitorObservation {
         let id = MonitorID(
             accountID: AccountID(rawValue: "account"),
@@ -202,14 +231,28 @@ final class DashboardOrganizationTests: XCTestCase {
             repositorySlug: repository.lowercased().replacingOccurrences(of: " ", with: "-"),
             repositoryName: repository,
             projectName: project,
-            isPinned: favorite
+            isPinned: favorite,
+            allowsPullRequestActions: readyToMerge
         )
-        let run = phase.map {
+        let resolvedPhase = phase ?? (readyToMerge ? .succeeded : nil)
+        let run = resolvedPhase.map {
             PipelineRun(
                 id: PipelineRunID(rawValue: "run-\(repository)"),
                 buildNumber: 1,
                 phase: $0,
-                startedAt: startedAt
+                origin: readyToMerge
+                    ? .pullRequest(id: 12, sourceBranch: "feature", destinationBranch: "develop")
+                    : .unknown,
+                commitHash: readyToMerge ? "abcdef" : nil,
+                startedAt: startedAt,
+                pullRequest: readyToMerge
+                    ? PipelinePullRequestContext(
+                        id: 12,
+                        title: "Ready",
+                        state: "OPEN",
+                        sourceCommitHash: "abcdef"
+                    )
+                    : nil
             )
         }
         return MonitorObservation(

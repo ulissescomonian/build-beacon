@@ -9,6 +9,10 @@ public struct DashboardView: View {
     @State private var filter: DashboardFilter = .all
     @State private var projectFilter: DashboardProjectFilter = .all
     @State private var searchText = ""
+    @State private var selectedMergeStrategy: PullRequestMergeStrategy = .mergeCommit
+    @State private var retainedMergePreflight: PullRequestMergePreflight?
+    @State private var retainedMergeTarget: PullRequestActionTarget?
+    @State private var mergeRepositoryName = ""
 
     public init(model: AppModel) {
         self.model = model
@@ -29,6 +33,7 @@ public struct DashboardView: View {
                     || isUnknown(phase)
             case .running: phase == .running || phase == .queued
             case .approval: phase == .awaitingApproval
+            case .readyToMerge: isReadyToMerge(observation)
             }
         }
     }
@@ -36,6 +41,12 @@ public struct DashboardView: View {
     private func isUnknown(_ phase: PipelinePhase?) -> Bool {
         if case .unknown? = phase { return true }
         return false
+    }
+
+    private func isReadyToMerge(_ observation: MonitorObservation) -> Bool {
+        guard model.pullRequestActionIsConfigured,
+              case .eligible = model.pullRequestMergeEligibility(for: observation) else { return false }
+        return true
     }
 
     private var activePresentationPreferences: MonitorPresentationPreferences {
@@ -56,7 +67,11 @@ public struct DashboardView: View {
     }
 
     private var sections: [DashboardSection] {
-        DashboardOrganization.prioritizedSections(for: filtered, grouping: model.monitorPresentation.grouping)
+        DashboardOrganization.prioritizedSections(
+            for: filtered,
+            grouping: model.monitorPresentation.grouping,
+            pullRequestActionsConfigured: model.pullRequestActionIsConfigured
+        )
     }
 
     private var projects: [DashboardProject] {
@@ -72,7 +87,8 @@ public struct DashboardView: View {
                             title: item.title,
                             systemImage: item.systemImage,
                             isSelected: filter == item,
-                            badgeCount: item == .recent ? model.unseenActivityCount : nil
+                            badgeCount: sidebarBadgeCount(for: item),
+                            badgeAccessibilityLabel: sidebarBadgeAccessibilityLabel(for: item)
                         ) {
                             filter = item
                         }
@@ -149,6 +165,10 @@ public struct DashboardView: View {
                                         observation: observation,
                                         refreshIntervalSeconds: model.refreshIntervalSeconds,
                                         approvalDetectedAt: model.approvalDetectedAt(for: observation.monitor.id),
+                                        mergeReadiness: PullRequestMergePresentation.readiness(
+                                            for: observation,
+                                            actionsConfigured: model.pullRequestActionIsConfigured
+                                        ),
                                         isUnseen: model.isActivityUnseen(observation),
                                         isFavoriteToggleDisabled: model.isMutatingMonitors,
                                         openApproval: {
@@ -157,6 +177,10 @@ public struct DashboardView: View {
                                                 monitor: observation.monitor,
                                                 buildNumber: run.buildNumber
                                             )
+                                        },
+                                        beginMerge: {
+                                            mergeRepositoryName = "\(observation.monitor.workspaceSlug)/\(observation.monitor.repositorySlug)"
+                                            _ = model.beginPullRequestAction(for: observation)
                                         },
                                         toggleFavorite: {
                                             withAnimation(
@@ -197,6 +221,10 @@ public struct DashboardView: View {
                     selectedHistory: model.selectedHistory,
                     notificationBuildNumber: model.selectedNotificationBuildNumber,
                     approvalDetectedAt: model.approvalDetectedAt(for: selected.monitor.id),
+                    mergeReadiness: PullRequestMergePresentation.readiness(
+                        for: selected,
+                        actionsConfigured: model.pullRequestActionIsConfigured
+                    ),
                     openURL: model.openPipelineURL,
                     openNotificationBuild: { buildNumber in
                         model.openPipelineBuildURL(
@@ -210,6 +238,10 @@ public struct DashboardView: View {
                             monitor: selected.monitor,
                             buildNumber: run.buildNumber
                         )
+                    },
+                    beginMerge: {
+                        mergeRepositoryName = "\(selected.monitor.workspaceSlug)/\(selected.monitor.repositorySlug)"
+                        _ = model.beginPullRequestAction(for: selected)
                     },
                     openCommit: model.openCommitURL,
                     openPullRequest: model.openPullRequestURL
@@ -284,7 +316,26 @@ public struct DashboardView: View {
                     .padding()
             }
         }
-        .task { await model.start() }
+        .sheet(isPresented: pullRequestActionSheetPresented) {
+            PullRequestMergeConfirmationView(
+                state: model.pullRequestActionSheetState,
+                retainedPreflight: retainedMergePreflight,
+                repositoryName: mergeRepositoryName,
+                accountName: model.configuration.account?.displayName ?? String(localized: "Current Bitbucket account", bundle: .module),
+                canOpenPullRequest: retainedMergePreflight?.webURL != nil,
+                selectedStrategy: $selectedMergeStrategy,
+                confirm: { strategy in
+                    _ = model.confirmPullRequestAction(strategy: strategy)
+                },
+                retry: retryPullRequestAction,
+                openPullRequest: openPullRequestForAction,
+                dismiss: cancelOrDismissPullRequestAction
+            )
+        }
+        .task {
+            await model.start()
+            await model.refreshPullRequestActionConfigurationStatus()
+        }
         .task(id: model.selectedMonitorID) {
             await model.loadHistory()
         }
@@ -293,6 +344,24 @@ public struct DashboardView: View {
                   let selectedMonitorID = model.selectedMonitorID,
                   !visibleIDs.contains(selectedMonitorID) else { return }
             model.selectedMonitorID = nil
+        }
+        .onChange(of: model.pullRequestActionSheetState) { _, state in
+            switch state {
+            case let .confirmation(preflight):
+                retainedMergePreflight = preflight
+                retainedMergeTarget = preflight.target
+                selectedMergeStrategy = preflight.defaultStrategy
+            case let .executing(preflight, _):
+                retainedMergePreflight = preflight
+                retainedMergeTarget = preflight.target
+            case let .loading(target):
+                retainedMergeTarget = target
+            case .hidden:
+                retainedMergePreflight = nil
+                retainedMergeTarget = nil
+            case .completed, .failed:
+                break
+            }
         }
     }
 
@@ -320,6 +389,72 @@ public struct DashboardView: View {
             }
         )
     }
+
+    private func sidebarBadgeCount(for filter: DashboardFilter) -> Int? {
+        switch filter {
+        case .recent:
+            return model.unseenActivityCount
+        case .approval:
+            return model.sortedObservations.count { $0.lastKnownRun?.phase == .awaitingApproval }
+        case .readyToMerge:
+            guard model.pullRequestActionIsConfigured else { return 0 }
+            return model.sortedObservations.count {
+                if case .eligible = model.pullRequestMergeEligibility(for: $0) { true } else { false }
+            }
+        case .all, .attention, .running:
+            return nil
+        }
+    }
+
+    private func sidebarBadgeAccessibilityLabel(for filter: DashboardFilter) -> String? {
+        guard let count = sidebarBadgeCount(for: filter), count > 0 else { return nil }
+        let format: String
+        switch filter {
+        case .recent:
+            format = String(localized: "%lld new activities", bundle: .module)
+        case .approval:
+            format = String(localized: "%lld pipelines awaiting approval", bundle: .module)
+        case .readyToMerge:
+            format = String(localized: "%lld pull requests ready to merge", bundle: .module)
+        case .all, .attention, .running:
+            return nil
+        }
+        return String(format: format, Int64(count))
+    }
+
+    private var pullRequestActionSheetPresented: Binding<Bool> {
+        Binding(
+            get: {
+                if case .hidden = model.pullRequestActionSheetState { return false }
+                return true
+            },
+            set: { isPresented in
+                guard !isPresented else { return }
+                cancelOrDismissPullRequestAction()
+            }
+        )
+    }
+
+    private func retryPullRequestAction() {
+        guard let target = retainedMergePreflight?.target ?? retainedMergeTarget,
+              let observation = model.snapshot?.observations[target.monitorID] else { return }
+        model.dismissPullRequestActionSheet()
+        _ = model.beginPullRequestAction(for: observation)
+    }
+
+    private func openPullRequestForAction() {
+        guard let target = retainedMergePreflight?.target,
+              let pullRequest = model.snapshot?.observations[target.monitorID]?.lastKnownRun?.pullRequest else { return }
+        model.openPullRequestURL(pullRequest)
+    }
+
+    private func cancelOrDismissPullRequestAction() {
+        if model.isPullRequestActionBusy {
+            model.cancelPullRequestAction()
+        } else {
+            model.dismissPullRequestActionSheet()
+        }
+    }
 }
 
 private enum DashboardFilter: String, CaseIterable, Identifiable {
@@ -328,6 +463,7 @@ private enum DashboardFilter: String, CaseIterable, Identifiable {
     case attention
     case running
     case approval
+    case readyToMerge
 
     var id: String { rawValue }
     var title: String {
@@ -337,6 +473,7 @@ private enum DashboardFilter: String, CaseIterable, Identifiable {
         case .attention: String(localized: "Attention", bundle: .module)
         case .running: String(localized: "Running", bundle: .module)
         case .approval: String(localized: "Approval", bundle: .module)
+        case .readyToMerge: String(localized: "Ready to Merge", bundle: .module)
         }
     }
     var systemImage: String {
@@ -346,6 +483,7 @@ private enum DashboardFilter: String, CaseIterable, Identifiable {
         case .attention: "exclamationmark.octagon"
         case .running: "arrow.trianglehead.2.clockwise.rotate.90"
         case .approval: "pause.circle"
+        case .readyToMerge: "arrow.triangle.merge"
         }
     }
 }
@@ -354,9 +492,11 @@ private struct MonitorDashboardRow: View {
     let observation: MonitorObservation
     let refreshIntervalSeconds: Int
     let approvalDetectedAt: Date?
+    let mergeReadiness: PullRequestMergeReadinessDisplay
     let isUnseen: Bool
     let isFavoriteToggleDisabled: Bool
     let openApproval: () -> Void
+    let beginMerge: () -> Void
     let toggleFavorite: () -> Void
 
     private var state: ObservationVisualState {
@@ -396,6 +536,9 @@ private struct MonitorDashboardRow: View {
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                             .accessibilityLabel("New activity")
+                    }
+                    if mergeReadiness.isReady {
+                        PullRequestReadyToMergeBadge(display: mergeReadiness)
                     }
                 }
                 HStack(spacing: 5) {
@@ -446,6 +589,22 @@ private struct MonitorDashboardRow: View {
                     .help("Open this pending approval in Bitbucket")
                     .accessibilityLabel("Open approval in Bitbucket for \(observation.monitor.repositoryName)")
                     .accessibilityHint("Opens the pending build approval in Bitbucket")
+                } else if let target = mergeReadiness.target {
+                    Button {
+                        beginMerge()
+                    } label: {
+                        Label("Approve and merge…", systemImage: "arrow.triangle.merge")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Review and confirm this pull request action")
+                    .accessibilityLabel(
+                        PullRequestMergePresentation.actionAccessibilityLabel(
+                            target: target,
+                            repositoryName: observation.monitor.repositoryName
+                        )
+                    )
+                    .accessibilityHint("Opens a confirmation. Nothing is merged until you confirm.")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -503,6 +662,26 @@ private struct MonitorDashboardRow: View {
     }
 }
 
+private struct PullRequestReadyToMergeBadge: View {
+    let display: PullRequestMergeReadinessDisplay
+
+    var body: some View {
+        if let title = display.badgeTitle {
+            Label(title, systemImage: "arrow.triangle.merge")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.green)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(.green.opacity(0.14), in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(.green.opacity(0.38), lineWidth: 1)
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel(display.accessibilityLabel ?? title)
+        }
+    }
+}
+
 private struct ProductionBadge: View {
     var body: some View {
         Text("Production")
@@ -525,6 +704,7 @@ private struct SidebarChoice: View {
     let isSelected: Bool
     var subtitle: String?
     var badgeCount: Int?
+    var badgeAccessibilityLabel: String?
     let action: () -> Void
 
     init(
@@ -533,6 +713,7 @@ private struct SidebarChoice: View {
         isSelected: Bool,
         subtitle: String? = nil,
         badgeCount: Int? = nil,
+        badgeAccessibilityLabel: String? = nil,
         action: @escaping () -> Void
     ) {
         self.title = title
@@ -540,6 +721,7 @@ private struct SidebarChoice: View {
         self.isSelected = isSelected
         self.subtitle = subtitle
         self.badgeCount = badgeCount
+        self.badgeAccessibilityLabel = badgeAccessibilityLabel
         self.action = action
     }
 
@@ -563,12 +745,7 @@ private struct SidebarChoice: View {
                     Text("\(badgeCount)")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                        .accessibilityLabel(
-                            String.localizedStringWithFormat(
-                                String(localized: "%lld new activities", bundle: .module),
-                                Int64(badgeCount)
-                            )
-                        )
+                        .accessibilityLabel(badgeAccessibilityLabel ?? "\(badgeCount)")
                 }
             }
             .contentShape(Rectangle())

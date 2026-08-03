@@ -821,6 +821,7 @@ separado de assinatura, rollback e proteção contra downgrade.
 | ADR-010 | Developer ID + notarização | instalação confiável | canal App Store aprovado |
 | ADR-011 | 1.0 somente leitura | endpoint de aprovação não está comprovado publicamente | contrato público e threat model aprovados |
 | ADR-012 | App Sandbox no 1.0 | contenção e entitlements explícitos | bloqueio técnico comprovado por spike |
+| ADR-013 | monitoramento read-only com `Approve and merge` opt-in isolado | reduz o atrito de PRs prontas sem dar capacidade de mutação ao polling; separa a credencial de ação com três scopes mínimos e exige dois preflights remotos completos | novo endpoint write, mudança dos scopes mínimos ou falha do contrato de preflight exigir revisão |
 
 ## 18. Riscos e mitigação
 
@@ -1543,3 +1544,80 @@ estrita de assinatura e `Info.plist`, DMG validado com `hdiutil` e sidecar
 SHA-256 foram aprovados. A revisão final não deixou achados após as correções,
 e o QA da aplicação instalada confirmou o toggle Production por monitor e as
 opções Approval reminder Off, 10 e 15.
+
+### 21.27 `Approve and merge` opt-in para pull request validada
+
+**Decisão em 3 de agosto de 2026.** O monitoramento, o polling, as notificações
+e os deep links permanecem somente leitura. A única exceção autorizada é uma
+ação foreground `Approve and merge`, habilitada explicitamente por monitor e
+desligada por padrão. Ela se aplica somente a uma pull request `OPEN`, não
+draft, cujo source HEAD seja exatamente o commit do build monitorado mais
+recente e cujo resultado seja `succeeded`. Aprovação de etapa manual, trigger de
+pipeline, rerun, cancelamento e automerge em segundo plano não fazem parte desse
+contrato.
+
+A mutação usa um segundo API token, separado da credencial de monitoramento em
+service próprio do Keychain, com exatamente os scopes
+`read:user:bitbucket`, `read:pullrequest:bitbucket` e
+`write:pullrequest:bitbucket`. O scope de usuário é necessário para confirmar a
+identidade da credencial antes de salvá-la e antes de qualquer mutação. A
+credencial read-only de monitoramento também precisa de
+`read:pullrequest:bitbucket` quando Action Mode estiver habilitado, embora esse
+scope continue opcional para observação sem ações. A configuração persiste
+apenas o opt-in por monitor e o estado mínimo necessário; nenhum token, payload
+remoto ou audit trail da ação é gravado fora do Keychain nesta primeira versão.
+Remover o opt-in, o monitor, a conta ou a credencial write elimina a capacidade
+de agir naquele destino.
+
+Cada tentativa começa por uma confirmação humana que apresenta workspace,
+repositório, PR, source e destination branches, source HEAD e build. Depois da
+confirmação, um preflight remoto composto usa a credencial de monitoramento
+para buscar a pipeline exata e confirmar identidade da execução, commit,
+associação mais recente e resultado ainda `succeeded`. A credencial de ação
+busca a PR e confirma estado `OPEN`, não draft, branches inalteradas e source
+HEAD idêntico ao valor confirmado e ao commit da execução. Qualquer divergência
+cancela a ação sem POST.
+
+Com as precondições válidas, o aplicativo envia `POST approve` uma única vez,
+sem retry automático. Antes do merge, um segundo preflight remoto completo
+repete as validações da pipeline exata com a credencial de monitoramento e da
+PR, branches e HEAD com a credencial de ação. Somente então envia `POST merge`,
+também uma única vez e sem retry automático. Resposta síncrona `200` ainda
+exige um GET final da PR. Resposta assíncrona `202` exige acompanhar somente a
+task retornada até estado terminal e então executar o GET final. O app só
+declara sucesso quando a PR for confirmada como `MERGED`.
+
+Timeout, perda de conexão, `5xx`, payload incompatível, falha ao acompanhar a
+task ou falha no GET final depois de um POST produzem resultado `unknown`: o
+aplicativo não presume falha, não repete a mutação e exige uma leitura fresca
+ou abertura do Bitbucket antes de permitir outra tentativa. Se approve for
+confirmado e merge não ocorrer, o app informa o estado parcial e não tenta
+retirar a aprovação como rollback. `401` ou `403` bloqueiam novas ações até
+revalidação da credencial; `409` ou mudança de HEAD antes de qualquer novo POST
+atualizam a PR e encerram a tentativa sem nova mutação. A UI publica as fases
+reais de revalidação, aprovação, merge e verificação, sem simular progresso.
+
+Esse modo nunca é acionado por polling, relaunch, notificação, lembrete, menu,
+deep link ou tarefa em segundo plano. Esses caminhos podem somente abrir e
+focar o contexto. A ausência deliberada de audit persistido reduz a retenção de
+metadados, mas também significa que o Bitbucket permanece a fonte de verdade
+para autoria, aprovação e merge.
+
+Alternativas rejeitadas nesta versão: manter somente os dois scopes de pull
+request e pular a validação de identidade, pelo risco de usar uma credencial da
+conta errada; reutilizar ou ampliar o token de monitoramento, pelo aumento do
+raio de impacto; confiar apenas no snapshot local da pipeline, que pode estar
+obsoleto; tratar alguns erros posteriores ao POST como repetíveis, pelo risco
+de duplicar mutações; permitir write para todos os monitores; aprovar etapa de
+pipeline; executar automerge; e persistir um log local detalhado de ações. O
+fluxo seguro de abrir a PR no Bitbucket continua disponível quando o modo write
+estiver desligado ou qualquer precondição falhar.
+
+Evidência final: 305 testes executados sem falhas, com 2 integrações Keychain
+opt-in omitidas. O build release, os catálogos EN e pt-BR, o bundle universal
+`arm64` e `x86_64`, a assinatura estrita, o DMG e o sidecar SHA-256 foram
+validados. A revisão independente final também confirmou o fechamento
+conservador de respostas malformadas depois de qualquer POST, a revalidação de
+identidade antes de cada mutação e mensagens de resultado que não afirmam um
+estado remoto sem confirmação. O Build Beacon build 6 foi instalado e iniciado
+em `/Applications`, com os bundles anteriores preservados em backups locais.

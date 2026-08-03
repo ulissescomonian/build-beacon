@@ -217,6 +217,21 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(BitbucketMapper.pullRequest(nicknameDTO)?.authorName, "nickname")
     }
 
+    func testPullRequestMapperIncludesFreshHeadDraftAndMergeStrategies() throws {
+        let dto = try JSONDecoder().decode(
+            BitbucketPullRequestDTO.self,
+            from: Data(#"{"id":17,"title":"Production","state":"OPEN","draft":true,"close_source_branch":true,"source":{"commit":{"hash":"abc123"}},"destination":{"branch":{"name":"main","merge_strategies":["merge_commit","squash","future_strategy"],"default_merge_strategy":"squash"}}}"#.utf8)
+        )
+
+        let context = try XCTUnwrap(BitbucketMapper.pullRequest(dto))
+
+        XCTAssertEqual(context.sourceCommitHash, "abc123")
+        XCTAssertTrue(context.isDraft)
+        XCTAssertEqual(context.availableMergeStrategies, [.mergeCommit, .squash])
+        XCTAssertEqual(context.defaultMergeStrategy, .squash)
+        XCTAssertTrue(context.closeSourceBranch)
+    }
+
     func testPipelineMapperToleratesObjectPullRequestTargetAndAcceptsStringID() throws {
         let dto = try JSONDecoder().decode(
             BitbucketPipelineDTO.self,
@@ -305,23 +320,33 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
         }
     }
 
-    func testLatestPipelineCachesCommitAndPullRequestContextPerRepositoryAndHash() async throws {
+    func testLatestPipelineCachesImmutableCommitButRefreshesMutablePullRequestContext() async throws {
         let accountID = AccountID(rawValue: "account")
         let store = InMemoryCredentialStore(credential: .init(email: "a@b.com", token: "token"), accountID: accountID)
         let pipeline = #"{"values":[{"uuid":"p","build_number":1,"state":{"name":"COMPLETED","result":{"name":"SUCCESSFUL"}},"target":{"commit":{"hash":"abcdef"}}}]}"#
         let transport = SequencedTransport(responses: [
             .json(pipeline), .json(#"{"values":[]}"#),
-            .json(#"{"hash":"abcdef","message":"Cached"}"#), .json(#"{"values":[]}"#),
+            .json(#"{"hash":"abcdef","message":"Cached"}"#),
+            .json(#"{"values":[{"id":17,"title":"First","state":"OPEN","source":{"commit":{"hash":"abcdef"}}}]}"#),
             .json(pipeline), .json(#"{"values":[]}"#),
+            .json(#"{"values":[{"id":17,"title":"Updated","state":"DECLINED","source":{"commit":{"hash":"fedcba"}}}]}"#),
         ])
         let client = makeClient(store: store, transport: transport)
 
-        _ = try await client.latestPipeline(for: monitor(accountID: accountID))
-        _ = try await client.latestPipeline(for: monitor(accountID: accountID))
+        let first = try await client.latestPipeline(for: monitor(accountID: accountID))
+        let second = try await client.latestPipeline(for: monitor(accountID: accountID))
 
+        XCTAssertEqual(first?.commitContext?.message, "Cached")
+        XCTAssertEqual(second?.commitContext?.message, "Cached")
+        XCTAssertEqual(first?.pullRequest?.title, "First")
+        XCTAssertEqual(first?.pullRequest?.state, "OPEN")
+        XCTAssertEqual(second?.pullRequest?.title, "Updated")
+        XCTAssertEqual(second?.pullRequest?.state, "DECLINED")
+        XCTAssertEqual(second?.pullRequest?.sourceCommitHash, "fedcba")
         let requests = await transport.requests
-        XCTAssertEqual(requests.count, 6)
-        XCTAssertEqual(requests.filter { $0.url?.path.contains("/commit/abcdef") == true }.count, 2)
+        XCTAssertEqual(requests.count, 7)
+        XCTAssertEqual(requests.filter { $0.url?.path.hasSuffix("/commit/abcdef") == true }.count, 1)
+        XCTAssertEqual(requests.filter { $0.url?.path.hasSuffix("/commit/abcdef/pullrequests") == true }.count, 2)
     }
 
     func testLatestPipelineCommitContextCacheIsIsolatedByAccount() async throws {
@@ -641,6 +666,12 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
                 .running
             ),
             (
+                #"{"values":[{"uuid":"p","build_number":89,"state":{"type":"pipeline_state_in_progress","stage":{"type":"pipeline_state_in_progress_halted"}}}]}"#,
+                #"{"values":[{"uuid":"halted","name":"Deploy production","state":{"type":"pipeline_step_state_in_progress_halted"}}]}"#,
+                .awaitingApproval,
+                .awaitingApproval
+            ),
+            (
                 #"{"values":[{"uuid":"p","build_number":1,"state":{"type":"pipeline_state_completed","result":{"type":"pipeline_state_completed_successful"}}}]}"#,
                 #"{"values":[{"uuid":"complete","name":"Tests","state":{"type":"pipeline_step_state_completed","result":{"type":"pipeline_step_state_completed_successful"}}}]}"#,
                 .succeeded,
@@ -671,6 +702,71 @@ final class BitbucketClientTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(fetchedPipeline?.phase, testCase.phase)
             XCTAssertEqual(fetchedPipeline?.steps.first?.phase, testCase.stepPhase)
         }
+    }
+
+    func testPullRequestActionRunValidationUsesMonitoringCredentialAndExactPipeline() async throws {
+        let accountID = AccountID(rawValue: "account")
+        let store = InMemoryCredentialStore(
+            credential: AccountCredential(email: "read@example.com", token: "read-token"),
+            accountID: accountID
+        )
+        let transport = SequencedTransport(responses: [
+            .json(#"{"uuid":"pipeline-87","build_number":87,"state":{"type":"pipeline_state_completed","result":{"type":"pipeline_state_completed_successful"}},"target":{"type":"pipeline_pullrequest_target","pullrequest":{"id":41},"source":{"branch":{"name":"feature/ready"}},"destination":{"branch":{"name":"dev"}},"commit":{"hash":"head123"}}}"#),
+        ])
+        let client = makeClient(store: store, transport: transport)
+
+        try await client.validatePullRequestActionRun(actionTarget(accountID: accountID))
+
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(
+            requests[0].url?.path,
+            "/2.0/repositories/epicway/bladecp-warp/pipelines/pipeline-87"
+        )
+        XCTAssertNotNil(requests[0].value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testPullRequestActionRunValidationRejectsHaltedPipeline() async {
+        let accountID = AccountID(rawValue: "account")
+        let store = InMemoryCredentialStore(
+            credential: AccountCredential(email: "read@example.com", token: "read-token"),
+            accountID: accountID
+        )
+        let transport = SequencedTransport(responses: [
+            .json(#"{"uuid":"pipeline-87","build_number":87,"state":{"type":"pipeline_state_in_progress","stage":{"type":"pipeline_state_in_progress_halted"}},"target":{"type":"pipeline_pullrequest_target","pullrequest":{"id":41},"source":{"branch":{"name":"feature/ready"}},"destination":{"branch":{"name":"dev"}},"commit":{"hash":"head123"}}}"#),
+        ])
+        let client = makeClient(store: store, transport: transport)
+
+        do {
+            try await client.validatePullRequestActionRun(actionTarget(accountID: accountID))
+            XCTFail("Expected halted pipeline to fail closed")
+        } catch let error as PullRequestActionError {
+            XCTAssertEqual(error, .pipelineNotSuccessful)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    private func actionTarget(accountID: AccountID) -> PullRequestActionTarget {
+        let monitorID = MonitorID(
+            accountID: accountID,
+            workspaceID: WorkspaceID(rawValue: "workspace"),
+            repositoryID: RepositoryID(rawValue: "repository"),
+            target: .repositoryLatest
+        )
+        return PullRequestActionTarget(
+            accountID: accountID,
+            monitorID: monitorID,
+            workspaceSlug: "epicway",
+            repositorySlug: "bladecp-warp",
+            pullRequestID: 41,
+            runID: PipelineRunID(rawValue: "pipeline-87"),
+            buildNumber: 87,
+            expectedSourceCommitHash: "head123",
+            sourceBranch: "feature/ready",
+            destinationBranch: "dev",
+            isProduction: false
+        )
     }
 
     private func makeClient(store: any CredentialStore, transport: any HTTPTransport) -> BitbucketClient {

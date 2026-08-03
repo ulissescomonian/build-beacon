@@ -4,6 +4,29 @@ import BuildBeaconUI
 import Foundation
 import OSLog
 
+@MainActor
+func afterDisconnectingPullRequestActions<Result>(
+    using service: any PullRequestActionServicing,
+    operation: @MainActor () async throws -> Result
+) async throws -> Result {
+    try await service.disconnectPullRequestActions()
+    return try await operation()
+}
+
+@MainActor
+func approveAndMergeWithProgress(
+    using service: any PullRequestActionServicing,
+    preflight: PullRequestMergePreflight,
+    strategy: PullRequestMergeStrategy,
+    progress: @escaping @Sendable (PullRequestActionOperationPhase) async -> Void
+) async throws -> PullRequestMergeOutcome {
+    try await service.approveAndMerge(
+        preflight,
+        strategy: strategy,
+        progress: progress
+    )
+}
+
 actor SnapshotRelay {
     private let notificationSender: any NotificationSending
     private let historyPersistence: SnapshotPersistenceCoordinator?
@@ -58,12 +81,13 @@ actor SnapshotRelay {
 }
 
 @MainActor
-final class ProductionRuntime: BuildBeaconRuntime {
+final class ProductionRuntime: BuildBeaconRuntime, PullRequestActionServicing {
     private let credentialStore: KeychainCredentialStore
     private let configurationStore: JSONConfigurationStore
     private let notificationService: UserNotificationService
     private let historyPersistence: SnapshotPersistenceCoordinator
     private let bitbucket: BitbucketClient
+    private let pullRequestActions: any PullRequestActionServicing
     private let relay: SnapshotRelay
     private let monitoringEngine: MonitoringEngine
     private let accountManager: AccountManager
@@ -79,6 +103,12 @@ final class ProductionRuntime: BuildBeaconRuntime {
         let ledger = try NotificationLedger(directoryName: "BuildBeacon")
         let notificationService = UserNotificationService(ledger: ledger)
         let bitbucket = BitbucketClient(credentialStore: credentialStore)
+        let pullRequestActions = BitbucketPullRequestActionClient(
+            credentialStore: KeychainPullRequestActionCredentialStore(
+                service: "com.epyczones.buildbeacon.bitbucket-pr-actions-token"
+            ),
+            runValidator: bitbucket
+        )
         let historyPersistence = SnapshotPersistenceCoordinator(
             historyStore: historyStore,
             configurationStore: configurationStore
@@ -106,6 +136,7 @@ final class ProductionRuntime: BuildBeaconRuntime {
         self.notificationService = notificationService
         self.historyPersistence = historyPersistence
         self.bitbucket = bitbucket
+        self.pullRequestActions = pullRequestActions
         self.relay = relay
         self.monitoringEngine = monitoringEngine
         self.accountManager = accountManager
@@ -118,6 +149,12 @@ final class ProductionRuntime: BuildBeaconRuntime {
     }
 
     func connect(email: String, token: String) async throws -> AppConfiguration {
+        try await afterDisconnectingPullRequestActions(using: pullRequestActions) {
+            try await self.connectMonitoringAccount(email: email, token: token)
+        }
+    }
+
+    private func connectMonitoringAccount(email: String, token: String) async throws -> AppConfiguration {
         let previousConfiguration = try await accountManager.configuration()
         await relay.suspend()
         let updatedConfiguration: AppConfiguration
@@ -154,6 +191,12 @@ final class ProductionRuntime: BuildBeaconRuntime {
     }
 
     func disconnect() async throws -> AppConfiguration {
+        try await afterDisconnectingPullRequestActions(using: pullRequestActions) {
+            try await self.disconnectMonitoringAccount()
+        }
+    }
+
+    private func disconnectMonitoringAccount() async throws -> AppConfiguration {
         let oldConfiguration = try await accountManager.configuration()
         await relay.suspend()
         do {
@@ -296,6 +339,45 @@ final class ProductionRuntime: BuildBeaconRuntime {
         await notificationService.reconcileApprovalReminders(
             activeApprovals: activeApprovals,
             interval: interval
+        )
+    }
+
+    var isConfigured: Bool {
+        get async { await pullRequestActions.isConfigured }
+    }
+
+    func configure(
+        _ credential: AccountCredential,
+        expectedAccountID: AccountID
+    ) async throws {
+        try await pullRequestActions.configure(credential, expectedAccountID: expectedAccountID)
+    }
+
+    func disconnectPullRequestActions() async throws {
+        try await pullRequestActions.disconnectPullRequestActions()
+    }
+
+    func preflight(_ target: PullRequestActionTarget) async throws -> PullRequestMergePreflight {
+        try await pullRequestActions.preflight(target)
+    }
+
+    func approveAndMerge(
+        _ preflight: PullRequestMergePreflight,
+        strategy: PullRequestMergeStrategy
+    ) async throws -> PullRequestMergeOutcome {
+        try await pullRequestActions.approveAndMerge(preflight, strategy: strategy)
+    }
+
+    func approveAndMerge(
+        _ preflight: PullRequestMergePreflight,
+        strategy: PullRequestMergeStrategy,
+        progress: @escaping @Sendable (PullRequestActionOperationPhase) async -> Void
+    ) async throws -> PullRequestMergeOutcome {
+        try await approveAndMergeWithProgress(
+            using: pullRequestActions,
+            preflight: preflight,
+            strategy: strategy,
+            progress: progress
         )
     }
 

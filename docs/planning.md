@@ -2198,3 +2198,132 @@ Validações do incremento:
 | revisões independentes | sem achados bloqueadores |
 
 Estado: entregue e aprovado para empacotamento Preview.
+
+### 28.27 Incremento a implementar: `Approve and merge` opt-in
+
+Escopo e ownership:
+
+- credenciais: adicionar `WriteCredentialStore` isolado, com service Keychain
+  diferente da credencial read e scopes exatos
+  `read:user:bitbucket`, `read:pullrequest:bitbucket` e
+  `write:pullrequest:bitbucket`; exigir `read:pullrequest:bitbucket` também na
+  credencial read-only quando Action Mode estiver habilitado;
+- domínio: modelar elegibilidade, confirmação, dois preflights imutáveis,
+  single-flight por PR e resultados `confirmed`, `rejected`, `partial` e
+  `unknown`, sem expor o token à monitoração;
+- API: implementar dois preflights remotos completos, cada um consultando a
+  pipeline exata com a credencial de monitoramento e a PR/HEAD com a credencial
+  de ação, além de `POST approve`, `POST merge`, acompanhamento da task de `202`
+  e GET final da PR;
+- UI: opt-in por monitor com default `false`, confirmação foreground por ação,
+  apresentação completa das precondições, publicação das fases reais de
+  revalidação, aprovação, merge e verificação, e feedback honesto para resultado
+  parcial ou desconhecido;
+- persistência: migrar configuração de forma reversível com allow write por
+  monitor desligado; não persistir audit trail de ações, SHA, payload ou erro
+  remoto nesta primeira versão;
+- integrador: manter polling, notificações, lembretes, menu e deep links fora do
+  grafo de dependência da credencial write e de qualquer endpoint mutável.
+
+Contrato estabilizado:
+
+- a única mutação permitida é `Approve and merge` para PR `OPEN`, não draft,
+  cujo source HEAD corresponda ao commit da execução monitorada mais recente e
+  `succeeded`;
+- habilitação global ou credencial write não bastam: o monitor exato precisa
+  estar explicitamente allowlisted, com default `false` em instalação e
+  migração;
+- a credencial write é um segundo item Keychain e aceita somente
+  `read:user:bitbucket`, `read:pullrequest:bitbucket` e
+  `write:pullrequest:bitbucket`; o scope de usuário valida a identidade antes de
+  salvar a credencial e antes de qualquer mutação; o token read não é promovido
+  nem substituído;
+- o token de monitoramento continua read-only, mas precisa de
+  `read:pullrequest:bitbucket` quando Action Mode estiver habilitado;
+- toda tentativa nasce de gesto humano com o app ativo e confirmação mostrando
+  workspace, repo, PR, branches, source HEAD e build;
+- o primeiro preflight consulta remotamente a pipeline exata com o token de
+  monitoramento e confirma execução, commit, associação mais recente e resultado
+  `succeeded`; com o token de ação, revalida PR `OPEN`, não draft, branches e
+  source HEAD; divergência executa zero POST;
+- `POST approve` ocorre uma vez, sem retry; depois dele, um segundo preflight
+  remoto repete todas as garantias com as duas credenciais antes de permitir
+  `POST merge` uma vez, sem retry;
+- `200` exige GET final; `202` acompanha somente a task retornada até estado
+  terminal e depois exige GET final; sucesso existe apenas com PR `MERGED`;
+- timeout, `5xx`, payload incompatível, falha de task ou GET final e qualquer
+  outra ambiguidade após POST resultam em `unknown`, sem retry; approve
+  confirmado sem merge é `partial` e não provoca unapprove automático;
+- a UI publica progresso real durante revalidação, aprovação, merge e
+  verificação, sem inventar percentual ou conclusão antecipada;
+- nenhum background, polling, relaunch, notificação, lembrete ou deep link pode
+  iniciar ou continuar a ação; no máximo abre o dashboard;
+- nesta primeira versão não há audit persistido. Configuração mínima e segredo
+  no Keychain são as únicas novas retenções locais.
+
+Critérios de aceite:
+
+- sem segundo token e allow por monitor, a aplicação conserva exatamente o
+  comportamento read-only e oferece somente abrir a PR no Bitbucket;
+- token read e write têm services Keychain diferentes; testes de arquitetura
+  provam que scheduler, notifications, reminders e link routing não resolvem
+  `WriteCredentialStore`;
+- PR merged, declined, draft, sem HEAD confiável, com branches divergentes,
+  build running/failed/unknown ou run em commit anterior nunca apresenta ação
+  elegível;
+- a confirmação é obrigatória em cada ação, acessível por teclado e VoiceOver,
+  e nenhum link ou evento consegue confirmá-la programaticamente;
+- mudança de estado, branch ou HEAD em qualquer preflight aborta sem merge; o
+  segundo preflight é obrigatório mesmo quando approve retorna sucesso;
+- testes de transporte provam zero retry para ambos os POSTs, bloqueio de
+  double-click e single-flight por PR;
+- `200`, `202`, task terminal, GET final, `401`, `403`, `409`, `429`, timeout,
+  `5xx` e payload incompatível produzem feedback conservador e determinístico;
+- a UI nunca afirma merge até GET final `MERGED` e nunca sugere que estado
+  `unknown` é falha segura para repetir;
+- migração mantém allow write desligado e falha ao salvar configuração ou
+  Keychain faz rollback local sem habilitação parcial;
+- nenhum token, Authorization, SHA, payload, URL, erro bruto ou registro da
+  ação aparece em config, ledger, logs, notificações, diagnostics ou fixtures;
+- strings en e pt-BR deixam claro que o merge é remoto, requer confirmação e
+  pode terminar com resultado desconhecido.
+
+Riscos e mitigação:
+
+| Risco | Mitigação |
+| --- | --- |
+| PR ou commit errado | allow por monitor, confirmação e dois preflights com HEAD/branches/run commit |
+| double-submit | single-flight, botão desabilitado e zero retry automático |
+| approve concluído e merge falho | estado parcial explícito, sem unapprove automático |
+| timeout após mutação | resultado `unknown`, GET fresco e bloqueio de repetição cega |
+| token write usado pelo monitoramento | Keychain service, protocolo e dependency graph separados |
+| permissão excessiva | aceitar somente os três scopes mínimos da credencial de ação; manter a credencial de monitoramento read-only |
+| mutação disparada fora de contexto | foreground obrigatório; notification/deep link apenas abrem a UI |
+| retenção indevida | nenhum audit persistido; config mínima e segredo somente no Keychain |
+
+Gates antes de entrega:
+
+- contract tests dos endpoints públicos de approve, merge, task e GET final;
+- testes de preflight e concorrência cobrindo toda divergência e erro descritos;
+- testes de Keychain e redaction para as duas credenciais;
+- testes de identidade, scopes exatos e preflights remotos com as duas
+  credenciais;
+- revisão de produto e segurança do modal, scopes, estado parcial e unknown;
+- suíte completa, release, localizações, `git diff --check` e QA da aplicação
+  instalada.
+
+Evidência final desta rodada:
+
+| Gate | Resultado |
+| --- | --- |
+| `swift test --quiet` | 305 testes executados, 0 falhas; 2 integrações Keychain opt-in omitidas |
+| `swift build -c release` | aprovado |
+| localizações | en e pt-BR validados com `plutil`, chaves equivalentes e sem duplicidade |
+| `git diff --check` | aprovado |
+| build universal e assinatura | build 6, `arm64` e `x86_64`, `codesign --verify --deep --strict` aprovados |
+| DMG e SHA-256 | artefato validado com `hdiutil` e sidecar confirmado com `shasum` |
+| instalação local | Build Beacon build 6 instalado e iniciado em `/Applications` com backup recuperável |
+| revisão do contrato de ação | três scopes mínimos, identidade, dois preflights remotos, ambiguidades e progresso real alinhados |
+| revisão independente final | sem achados bloqueadores após correções e regressões específicas |
+
+Estado: implementação concluída e validada para o Build Beacon build 6.

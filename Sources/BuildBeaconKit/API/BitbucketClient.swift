@@ -5,7 +5,6 @@ private struct CommitContextCacheKey: Hashable, Sendable {
     let workspaceSlug: String
     let repositorySlug: String
     let commitHash: String
-    let pullRequestEnrichment: PullRequestEnrichment
 }
 
 private enum PullRequestEnrichment: Hashable, Sendable {
@@ -16,7 +15,6 @@ private enum PullRequestEnrichment: Hashable, Sendable {
 
 private struct CachedCommitContext: Sendable {
     let commit: BitbucketCommitDetailsDTO
-    let pullRequest: BitbucketPullRequestDTO?
 }
 
 /// Bounded actor cache for the immutable context associated with a repository commit.
@@ -76,7 +74,7 @@ public struct BitbucketClientConfiguration: Sendable {
     }
 }
 
-public actor BitbucketClient: BitbucketService {
+public actor BitbucketClient: BitbucketService, PullRequestActionRunValidating {
     public typealias Sleep = @Sendable (TimeInterval) async throws -> Void
 
     private let credentialStore: any CredentialStore
@@ -204,23 +202,32 @@ public actor BitbucketClient: BitbucketService {
                 workspaceSlug: monitor.workspaceSlug,
                 repositorySlug: monitor.repositorySlug,
                 commitHash: commitHash,
-                pullRequestEnrichment: pullRequestEnrichment,
                 credential: credential
             )
         } else {
             context = nil
         }
-        let pullRequest: PipelinePullRequestContext?
-        if let context {
-            pullRequest = BitbucketMapper.pullRequest(context.pullRequest)
-        } else if case let .exactID(id) = pullRequestEnrichment {
+        var pullRequest: PipelinePullRequestContext?
+        switch pullRequestEnrichment {
+        case let .exactID(id):
             pullRequest = BitbucketMapper.pullRequest(await optionalPullRequest(
                 workspaceSlug: monitor.workspaceSlug,
                 repositorySlug: monitor.repositorySlug,
                 id: id,
                 credential: credential
             ))
-        } else {
+        case .associatedWithCommit:
+            if let commitHash, !commitHash.isEmpty {
+                pullRequest = BitbucketMapper.pullRequest(await optionalPullRequest(
+                    workspaceSlug: monitor.workspaceSlug,
+                    repositorySlug: monitor.repositorySlug,
+                    commitHash: commitHash,
+                    credential: credential
+                ))
+            } else {
+                pullRequest = nil
+            }
+        case .none:
             pullRequest = nil
         }
         return try BitbucketMapper.pipeline(
@@ -231,20 +238,49 @@ public actor BitbucketClient: BitbucketService {
         )
     }
 
+    public func validatePullRequestActionRun(_ target: PullRequestActionTarget) async throws {
+        do {
+            let credential = try await requiredCredential(for: target.accountID)
+            let dto: BitbucketPipelineDTO = try await get(
+                endpoint: Endpoint(path: [
+                    "repositories", target.workspaceSlug, target.repositorySlug,
+                    "pipelines", target.runID.rawValue,
+                ]),
+                credential: credential
+            )
+            let run = try BitbucketMapper.pipeline(dto, steps: [])
+            guard run.id == target.runID,
+                  run.buildNumber == target.buildNumber,
+                  run.phase == .succeeded,
+                  run.commitHash?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    == target.expectedSourceCommitHash.lowercased(),
+                  case let .pullRequest(id, source, destination) = run.origin,
+                  id == target.pullRequestID,
+                  source == target.sourceBranch,
+                  destination == target.destinationBranch else {
+                throw PullRequestActionError.pipelineNotSuccessful
+            }
+        } catch let error as PullRequestActionError {
+            throw error
+        } catch let error as BitbucketAPIError {
+            throw Self.pullRequestActionError(error)
+        } catch {
+            throw PullRequestActionError.temporarilyUnavailable
+        }
+    }
+
     private func cachedCommitContext(
         accountID: AccountID,
         workspaceSlug: String,
         repositorySlug: String,
         commitHash: String,
-        pullRequestEnrichment: PullRequestEnrichment,
         credential: AccountCredential
     ) async throws -> CachedCommitContext {
         let key = CommitContextCacheKey(
             accountID: accountID,
             workspaceSlug: workspaceSlug,
             repositorySlug: repositorySlug,
-            commitHash: commitHash,
-            pullRequestEnrichment: pullRequestEnrichment
+            commitHash: commitHash
         )
         if let cached = await commitContextCache.value(for: key) {
             return cached
@@ -253,26 +289,7 @@ public actor BitbucketClient: BitbucketService {
             endpoint: Endpoint(path: ["repositories", workspaceSlug, repositorySlug, "commit", commitHash]),
             credential: credential
         )
-        let pullRequest: BitbucketPullRequestDTO?
-        switch pullRequestEnrichment {
-        case let .exactID(id):
-            pullRequest = await optionalPullRequest(
-                workspaceSlug: workspaceSlug,
-                repositorySlug: repositorySlug,
-                id: id,
-                credential: credential
-            )
-        case .associatedWithCommit:
-            pullRequest = await optionalPullRequest(
-                workspaceSlug: workspaceSlug,
-                repositorySlug: repositorySlug,
-                commitHash: commitHash,
-                credential: credential
-            )
-        case .none:
-            pullRequest = nil
-        }
-        let context = CachedCommitContext(commit: commit, pullRequest: pullRequest)
+        let context = CachedCommitContext(commit: commit)
         await commitContextCache.insert(context, for: key)
         return context
     }
@@ -521,6 +538,21 @@ public actor BitbucketClient: BitbucketService {
 
     private func checkCancellation() throws {
         if Task.isCancelled { throw BitbucketAPIError.cancelled }
+    }
+
+    private static func pullRequestActionError(_ error: BitbucketAPIError) -> PullRequestActionError {
+        switch error {
+        case .missingCredential, .invalidCredentials: .invalidCredentials
+        case .insufficientPermissions: .insufficientPermissions
+        case let .rateLimited(retryAt): .rateLimited(retryAt: retryAt)
+        case .timedOut: .timedOut
+        case .offline: .offline
+        case .cancelled: .cancelled
+        case .notFound: .staleRun
+        case .malformedResponse, .responseTooLarge, .unsafeRedirect, .pagination, .invalidURL:
+            .malformedResponse
+        case .server, .transport: .temporarilyUnavailable
+        }
     }
 }
 

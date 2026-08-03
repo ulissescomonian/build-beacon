@@ -29,7 +29,7 @@
 > [!IMPORTANT]
 > **Preview release.** Until a release explicitly says otherwise, builds are local/ad-hoc and are not Developer ID signed or notarized. Follow the release notes and checksum instructions for the exact artifact you download. Never disable Gatekeeper system-wide to open an app.
 
-Build Beacon keeps the most useful Bitbucket Pipeline signal where it belongs: in your menu bar. Connect a scoped, read-only API token, choose the repositories or branches that matter, and see whether work is healthy, running, waiting, or needs attention—without turning a dashboard into another place to babysit.
+Build Beacon keeps the most useful Bitbucket Pipeline signal where it belongs: in your menu bar. Connect a scoped, read-only monitoring token, choose the repositories or branches that matter, and see whether work is healthy, running, waiting, or needs attention—without turning a dashboard into another place to babysit. Monitoring remains read-only by default; an isolated per-monitor Action Mode can optionally approve and merge an eligible pull request after explicit confirmation.
 
 ## Why Build Beacon
 
@@ -44,7 +44,8 @@ Build Beacon keeps the most useful Bitbucket Pipeline signal where it belongs: i
 - **Clear run origin and ownership.** Dashboard rows identify whether an execution is a branch run, a pull request, or an unknown source, and show the relevant author when Bitbucket provides it: the PR author for pull-request runs or the commit author for branch runs. Pull-request runs also show their number and source-to-destination route. Relative activity age stays separate from the duration of the latest build.
 - **Helpful context when available.** Pipeline detail can surface commit and pull-request context returned by Bitbucket, with safe links back to those resources. Optional PR details never change the classified origin of a branch run.
 - **Guided least privilege.** The in-app setup explains the exact Bitbucket scoped-token flow and required read permissions.
-- **Local-first credentials.** The API token lives in the macOS Keychain, never in preferences, configuration files, or plaintext fallbacks.
+- **Opt-in pull-request action.** An allowlisted monitor can offer **Approve and merge** only for an open, non-draft PR whose current source commit has a succeeded monitored build. It never runs from polling, notifications, deep links, or background work.
+- **Local-first credentials.** Monitoring and Action Mode use separate API tokens in separate macOS Keychain items, never in preferences, configuration files, or plaintext fallbacks.
 
 ## At a glance
 
@@ -88,7 +89,7 @@ The **Recent** filter shows the monitors with activity that is new to you and di
 
 ### Required Bitbucket scopes
 
-Build Beacon is read-only. Create a Bitbucket API token with scopes and enable these required permissions:
+Build Beacon monitoring is read-only. Create a Bitbucket API token with scopes and enable these required permissions:
 
 ```text
 read:user:bitbucket
@@ -103,7 +104,24 @@ For optional pull-request context in pipeline detail, also enable:
 read:pullrequest:bitbucket
 ```
 
-Monitoring works normally without that optional scope; only the related PR context is omitted. Do not grant Write or Admin scopes. If a connected account has no workspaces or repositories available, confirm that the token belongs to the intended Atlassian account and that it has access to those Bitbucket resources.
+Monitoring works normally without that optional scope; only the related PR context is omitted. When Action Mode is used, however, `read:pullrequest:bitbucket` is required on the monitoring token so the dashboard can associate the exact pull request with the monitored pipeline. The separate Action Mode token revalidates the pull request before each mutation. Do not grant Write or Admin scopes to the monitoring token. If a connected account has no workspaces or repositories available, confirm that the token belongs to the intended Atlassian account and that it has access to those Bitbucket resources.
+
+### Optional Action Mode scopes
+
+Action Mode is off by default and must also be enabled for each monitor. It uses
+a second Keychain token with exactly these scopes:
+
+```text
+read:user:bitbucket
+read:pullrequest:bitbucket
+write:pullrequest:bitbucket
+```
+
+`read:user:bitbucket` validates that this separate token belongs to the
+connected account before any mutation. Do not reuse or broaden the monitoring
+token. This credential can only support
+the foreground **Approve and merge** flow described below; it cannot approve a
+manual pipeline step or enable background automerge.
 
 ## Architecture
 
@@ -162,13 +180,14 @@ sequenceDiagram
 
 The security model is intentionally narrow:
 
-- The token is stored as a device-local, non-synchronizable Keychain item.
-- Build Beacon does not write the token to UserDefaults, JSON configuration, logs, or a plaintext fallback.
+- The monitoring and Action Mode tokens are stored as separate device-local, non-synchronizable Keychain items.
+- Build Beacon does not write either token to UserDefaults, JSON configuration, logs, or a plaintext fallback.
 - Selected monitor metadata and presentation preferences stay in local configuration; pipeline snapshots remain in memory. The unseen-activity marker persists only opaque monitor and run identifiers, so it can survive a relaunch without storing commit content or repository display data. Requests are made to Bitbucket only when monitoring requires them.
 - Optional local history is bounded to the most recent 20 runs per monitor, 500 entries overall, and 30 days. Its persisted entries contain run identity, status, and timing only—not repository names, branches, commit hashes, failure text, URLs, steps, credentials, payloads, or request metadata.
 - The notification ledger is bounded and sanitized to avoid repeat alerts; notifications carry a local route so opening one selects the original monitor and build instead of silently jumping to a newer result.
 - Optional approval reminders retain only opaque account, monitor, and run identifiers plus the minimum transition and timing data needed to deduplicate a 10- or 15-minute local reminder. They are cancelled when the build progresses, the monitor is removed, or the account is disconnected.
-- API access uses only the required read scopes listed above, plus the optional pull-request read scope when the user chooses to enable PR context.
+- Monitoring API access uses only the required read scopes listed above, plus the pull-request read scope when the user enables PR context or Action Mode.
+- Action Mode stores only the per-monitor opt-in in configuration. This first version keeps no persistent action audit; Bitbucket remains the source of truth for approval and merge state.
 - Disconnecting removes the stored credential, active account configuration, and associated local history.
 - Network, rate-limit, malformed-response, and authentication failures are surfaced as actionable states instead of being silently treated as healthy.
 
@@ -202,7 +221,8 @@ After connection, Build Beacon lives in the menu bar.
 
 - Click the icon to see the overall health of your monitors and the most relevant recent state.
 - Choose **Open Dashboard** for a larger view of monitored pipelines, steps, retained run history, and any available commit or pull-request context. Each row prioritizes the relevant author, its textual source badge, and its branch or pull-request route; workspace context remains available in detail. A pull-request run shows its PR author, number, and source-to-destination route, while a normal branch run shows its commit author and remains identified as a branch. The relative age at the right shows recency, while the third line shows the latest build duration when available and combines it with an actionable step for failed, active, queued, or approval-waiting runs. Repeated requests focus the same dashboard window; if it is minimized, it is restored. If you keep the app in the Dock, clicking it follows that same open-or-focus behavior even when the dashboard is closed. The transient Dock icon disappears when you close the workspace; a tile you manually keep remains as a launcher.
-- Use the **Approval Center** to handle manual gates first. It keeps approval waits visible, can show trusted production context, and provides **Open in Bitbucket** for the exact build. This only opens the Bitbucket page: Build Beacon never approves a deployment or merges a pull request for you. In **Settings → Refresh**, you can opt into one local reminder after 10 or 15 minutes while the same approval remains pending. Reminders stop as soon as that build progresses.
+- Use the **Approval Center** to handle manual pipeline gates first. It keeps approval waits visible, can show trusted production context, and provides **Open in Bitbucket** for the exact build. Build Beacon never approves a manual pipeline step. In **Settings → Refresh**, you can opt into one local reminder after 10 or 15 minutes while the same approval remains pending. Reminders stop as soon as that build progresses.
+- For an allowlisted monitor, **Approve and merge** appears only when the PR is open, not a draft, and its current source HEAD is the commit of a succeeded monitored build. Every click shows the PR, branches, commit, and build for confirmation. Before approval and again before merge, Build Beacon remotely validates the exact pipeline with the monitoring token and PR/HEAD with the Action Mode token. The app publishes whether it is revalidating, approving, merging, or verifying, and never retries either write automatically. Every ambiguous response after a POST remains unknown, so you must refresh or open the PR before trying again.
 - The Dashboard opens in recent-activity order. Use its sidebar and view options to filter by state, **Recent**, or project; search repositories; group or sort monitors; and bring favorites to the top. Rows show relative activity time, while the blue **NEW** marker identifies activity you have not acknowledged yet.
 - Use the Settings button in the Dashboard toolbar, **Settings** in the menu bar, or Command-Comma to open the same native Settings window.
 - Use **Settings → Monitoring** to filter by project and search repositories before adding them. Choose **Select All Visible** to add a filtered set at once, choose one shared target (**Latest run** or **Default branch**), and confirm it as one atomic operation. Repositories already monitored cannot be selected again. The Advanced section remains available for a specific branch.
@@ -281,7 +301,7 @@ The tests cover API mapping and transport behavior, lifecycle and adaptive polli
 
 ## Preview limitations
 
-Build Beacon 1.0.0 is a Preview release. It focuses on native, read-only Bitbucket Pipeline observation and purposeful local notifications. It does not claim automatic updates, release publishing, write operations, Developer ID signing, notarization, or hosted synchronization. Treat release notes as the source of truth for the artifact and distribution guarantees of a particular version.
+Build Beacon 1.0.0 is a Preview release. It focuses on native, read-only-by-default Bitbucket Pipeline observation, purposeful local notifications, and one isolated foreground pull-request action when explicitly enabled. It does not claim automatic updates, release publishing, general Bitbucket write operations, background automerge, Developer ID signing, notarization, or hosted synchronization. Treat release notes as the source of truth for the artifact and distribution guarantees of a particular version.
 
 ## Contributing
 
