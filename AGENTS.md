@@ -44,6 +44,28 @@ env SIGNING_IDENTITY=- ./scripts/build_app.sh
 ./scripts/package_dmg.sh
 ```
 
+## Local build replacement
+
+Replacing the installed app is an upgrade operation, not a clean-install check.
+Before changing the bundle in `/Applications`, identify and record the installed
+app version/build and the schema versions of the existing local persistence
+files without printing their contents. Preserve a recoverable backup of both
+the installed app and the compatible configuration/persistence set.
+
+Validate every schema transition against an isolated, sanitized copy that
+retains the representative topology and feature state of the real local data.
+The fixture must contain no account details, repository names, personal paths,
+tokens, commit content, or other private values. A clean installation can be an
+additional check, but it is never sufficient evidence to replace an existing
+build.
+
+Do not export, delete, replace, or copy Keychain items during an app upgrade or
+rollback. Test the upgrade from the preserved previous state, launch the new
+bundle, and confirm that the expected account identity and monitor set are
+present before accepting the replacement. Test rollback as an app and config
+pair: an older app must receive a configuration version it supports. If upgrade
+or rollback validation fails, restore the preserved pair and stop promotion.
+
 The release bundle must include both `arm64` and `x86_64`, pass
 `codesign --verify --deep --strict`, and have a matching SHA-256 sidecar. A
 Preview release is ad-hoc signed and is not a substitute for Developer ID

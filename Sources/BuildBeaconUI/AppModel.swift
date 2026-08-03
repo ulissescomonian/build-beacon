@@ -1518,6 +1518,9 @@ public final class AppModel {
     }
 
     private static func message(for error: Error) -> String {
+        if let configurationError = error as? ConfigurationStoreError {
+            return message(for: configurationError)
+        }
         if let provider = error as? any ObservationFailureProviding {
             return message(for: provider.observationFailure)
         }
@@ -1546,5 +1549,35 @@ public final class AppModel {
             }
         }
         return error.localizedDescription
+    }
+
+    private static func message(for error: ConfigurationStoreError) -> String {
+        switch error {
+        case .corrupted:
+            String(
+                localized: "Build Beacon could not read the saved configuration. A recovery copy was preserved, and configuration changes are paused until it is recovered.",
+                bundle: .module
+            )
+        case .unsupportedSchema:
+            String(
+                localized: "The saved configuration was created by a newer Build Beacon version. It was preserved unchanged. Update Build Beacon before making configuration changes.",
+                bundle: .module
+            )
+        case .recoveryRequired:
+            String(
+                localized: "The saved configuration requires recovery. Build Beacon preserved it and paused configuration changes. Recover the configuration before trying to save again.",
+                bundle: .module
+            )
+        case .invalidConfiguration:
+            String(
+                localized: "Build Beacon could not save these configuration changes because the resulting data was invalid. The previously saved configuration was preserved.",
+                bundle: .module
+            )
+        case .fileSystem:
+            String(
+                localized: "Build Beacon could not access the local configuration file. Existing data was not reset. Check this Mac's storage permissions and try again.",
+                bundle: .module
+            )
+        }
     }
 }

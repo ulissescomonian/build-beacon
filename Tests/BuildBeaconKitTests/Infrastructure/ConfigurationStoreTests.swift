@@ -112,6 +112,161 @@ final class ConfigurationStoreTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(migratedObject["schemaVersion"] as? Int, AppConfiguration.schemaVersion)
     }
 
+    func testV4ConfigurationMigratesAllFieldsAndDisablesPullRequestActions() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("configuration.json")
+        let legacy = realisticV4Configuration(monitorCount: 11)
+        let original = try wrappedLegacyV4Data(from: legacy)
+        try original.write(to: fileURL, options: .atomic)
+
+        let loaded = try await JSONConfigurationStore(fileURL: fileURL).load()
+
+        var expected = legacy
+        for index in expected.monitors.indices {
+            expected.monitors[index].allowsPullRequestActions = false
+        }
+        XCTAssertEqual(loaded, expected)
+        XCTAssertEqual(loaded.monitors.count, 11)
+        XCTAssertTrue(loaded.monitors.allSatisfy { !$0.allowsPullRequestActions })
+
+        let backupURLs = try v4BackupURLs(in: directory)
+        XCTAssertEqual(backupURLs.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(backupURLs.first)), original)
+
+        let migratedObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
+        )
+        XCTAssertEqual(migratedObject["schemaVersion"] as? Int, 5)
+        let migratedConfiguration = try XCTUnwrap(migratedObject["configuration"] as? [String: Any])
+        let migratedMonitors = try XCTUnwrap(migratedConfiguration["monitors"] as? [[String: Any]])
+        XCTAssertEqual(migratedMonitors.count, 11)
+        XCTAssertTrue(migratedMonitors.allSatisfy { $0["allowsPullRequestActions"] as? Bool == false })
+    }
+
+    func testV4MigrationIsIdempotentAndDoesNotCreateAnotherBackup() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("configuration.json")
+        try wrappedLegacyV4Data(from: realisticV4Configuration(monitorCount: 3))
+            .write(to: fileURL, options: .atomic)
+        let store = JSONConfigurationStore(fileURL: fileURL)
+
+        let firstLoad = try await store.load()
+        let migratedData = try Data(contentsOf: fileURL)
+        let secondLoad = try await store.load()
+
+        XCTAssertEqual(secondLoad, firstLoad)
+        XCTAssertEqual(try Data(contentsOf: fileURL), migratedData)
+        XCTAssertEqual(try v4BackupURLs(in: directory).count, 1)
+        try await store.save(secondLoad)
+    }
+
+    func testV4MigrationSecuresReusedIdenticalBackup() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("configuration.json")
+        let backupURL = directory.appendingPathComponent("configuration.backup-v4-existing.json")
+        let current = try wrappedLegacyV4Data(from: realisticV4Configuration(monitorCount: 2))
+        try current.write(to: fileURL, options: .atomic)
+        try current.write(to: backupURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o666],
+            ofItemAtPath: backupURL.path
+        )
+        assertPermissions(backupURL, equalTo: 0o666)
+
+        _ = try await JSONConfigurationStore(fileURL: fileURL).load()
+
+        let backupURLs = try v4BackupURLs(in: directory)
+        XCTAssertEqual(backupURLs.count, 1)
+        XCTAssertEqual(backupURLs.first?.lastPathComponent, backupURL.lastPathComponent)
+        XCTAssertEqual(try Data(contentsOf: backupURL), current)
+        assertPermissions(backupURL, equalTo: 0o600)
+    }
+
+    func testV4MigrationCreatesCurrentBackupWhenExistingV4BackupHasDifferentContent() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("configuration.json")
+        let oldBackupURL = directory.appendingPathComponent("configuration.backup-v4-old.json")
+        let oldBackup = try wrappedLegacyV4Data(from: realisticV4Configuration(monitorCount: 1))
+        let current = try wrappedLegacyV4Data(from: realisticV4Configuration(monitorCount: 4))
+        try oldBackup.write(to: oldBackupURL, options: .atomic)
+        try current.write(to: fileURL, options: .atomic)
+
+        _ = try await JSONConfigurationStore(fileURL: fileURL).load()
+
+        let backupURLs = try v4BackupURLs(in: directory)
+        XCTAssertEqual(backupURLs.count, 2)
+        XCTAssertEqual(try Data(contentsOf: oldBackupURL), oldBackup)
+        let backupContents = try backupURLs.map { try Data(contentsOf: $0) }
+        XCTAssertEqual(backupContents.filter { $0 == oldBackup }.count, 1)
+        XCTAssertEqual(backupContents.filter { $0 == current }.count, 1)
+    }
+
+    func testV4MigrationWriteFailurePreservesOriginalAndRequiresRecovery() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("configuration.json")
+        let original = try wrappedLegacyV4Data(from: realisticV4Configuration(monitorCount: 2))
+        try original.write(to: fileURL, options: .atomic)
+        let store = JSONConfigurationStore(
+            fileURL: fileURL,
+            atomicWriter: { _, _ in throw SimulatedAtomicWriteError() }
+        )
+
+        do {
+            _ = try await store.load()
+            XCTFail("Expected the migration write to fail")
+        } catch let error as ConfigurationStoreError {
+            guard case .fileSystem = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertEqual(try Data(contentsOf: fileURL), original)
+        let backupURLs = try v4BackupURLs(in: directory)
+        XCTAssertEqual(backupURLs.count, 1)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(backupURLs.first)), original)
+        do {
+            try await store.save(AppConfiguration())
+            XCTFail("A failed migration must keep recovery required")
+        } catch let error as ConfigurationStoreError {
+            XCTAssertEqual(error, .recoveryRequired)
+        }
+    }
+
+    func testExternalSanitizedV4FixtureMigratesWhenProvided() async throws {
+        let environmentKey = "BUILD_BEACON_V4_FIXTURE_PATH"
+        guard let fixturePath = ProcessInfo.processInfo.environment[environmentKey],
+              !fixturePath.isEmpty else {
+            throw XCTSkip("Set \(environmentKey) to validate a sanitized schema 4 fixture")
+        }
+        let original = try Data(contentsOf: URL(fileURLWithPath: fixturePath))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: original) as? [String: Any])
+        XCTAssertEqual(object["schemaVersion"] as? Int, 4)
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("configuration.json")
+        try original.write(to: fileURL, options: .atomic)
+
+        let loaded = try await JSONConfigurationStore(fileURL: fileURL).load()
+
+        XCTAssertTrue(loaded.monitors.allSatisfy { !$0.allowsPullRequestActions })
+        XCTAssertEqual(try v4BackupURLs(in: directory).count, 1)
+        let migrated = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
+        )
+        XCTAssertEqual(migrated["schemaVersion"] as? Int, 5)
+    }
+
     func testApprovalWaitsRoundTripAtomicallyAndPruneInactiveMarkers() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -460,11 +615,29 @@ final class ConfigurationStoreTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    private func wrappedLegacyV4Data(from configuration: AppConfiguration) throws -> Data {
+        var object = try encodedConfigurationObject(configuration, excludingV2Fields: false)
+        if var monitors = object["monitors"] as? [[String: Any]] {
+            monitors = monitors.map { monitor in
+                var legacy = monitor
+                legacy.removeValue(forKey: "allowsPullRequestActions")
+                return legacy
+            }
+            object["monitors"] = monitors
+        }
+        return try JSONSerialization.data(
+            withJSONObject: ["schemaVersion": 4, "configuration": object],
+            options: [.sortedKeys]
+        )
+    }
+
     private func encodedConfigurationObject(
         _ configuration: AppConfiguration,
         excludingV2Fields: Bool = true
     ) throws -> [String: Any] {
-        let data = try JSONEncoder().encode(configuration)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(configuration)
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         if excludingV2Fields {
             object.removeValue(forKey: "monitorPresentation")
@@ -479,6 +652,72 @@ final class ConfigurationStoreTests: XCTestCase, @unchecked Sendable {
             }
         }
         return object
+    }
+
+    private func realisticV4Configuration(monitorCount: Int) -> AppConfiguration {
+        let account = AccountProfile(
+            id: AccountID(rawValue: "account"),
+            displayName: "Build Operator",
+            email: "operator@example.com"
+        )
+        let monitors = (0..<monitorCount).map { index in
+            MonitorConfiguration(
+                id: MonitorID(
+                    accountID: account.id,
+                    workspaceID: WorkspaceID(rawValue: "workspace-\(index % 2)"),
+                    repositoryID: RepositoryID(rawValue: "repository-\(index)"),
+                    target: index.isMultiple(of: 2)
+                        ? .defaultBranch
+                        : .branch(exactName: "release-\(index)")
+                ),
+                workspaceSlug: "workspace-\(index % 2)",
+                workspaceName: "Workspace \(index % 2)",
+                repositorySlug: "repository-\(index)",
+                repositoryName: "Repository \(index)",
+                projectName: index.isMultiple(of: 3) ? nil : "Project \(index % 3)",
+                isPinned: index.isMultiple(of: 2),
+                isHidden: index.isMultiple(of: 5),
+                isProduction: index.isMultiple(of: 4),
+                allowsPullRequestActions: true
+            )
+        }
+        let unseenActivity = monitors.first.map {
+            [MonitorActivityMarker(monitorID: $0.id, runID: PipelineRunID(rawValue: "unseen-run"))]
+        } ?? []
+        let approvalWaits = monitors.dropFirst().first.map {
+            [ApprovalWaitMarker(
+                monitorID: $0.id,
+                runID: PipelineRunID(rawValue: "approval-run"),
+                firstDetectedAt: Date(timeIntervalSince1970: 1_700_000_000)
+            )]
+        } ?? []
+        return AppConfiguration(
+            account: account,
+            monitors: monitors,
+            refreshIntervalSeconds: 300,
+            notificationsEnabled: false,
+            notifyOnFailure: false,
+            notifyOnRecovery: true,
+            notifyOnApproval: false,
+            notifyOnFavoriteSuccess: true,
+            monitorPresentation: .init(
+                grouping: .project,
+                sortOrder: .repository,
+                favoritesFirst: false,
+                hideRepositoriesWithoutRuns: true
+            ),
+            historyEnabled: false,
+            unseenActivity: unseenActivity,
+            approvalWaits: approvalWaits,
+            approvalReminderInterval: .fifteenMinutes
+        )
+    }
+
+    private func v4BackupURLs(in directory: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.contains("backup-v4") }
     }
 
     private func monitor(
@@ -499,3 +738,5 @@ final class ConfigurationStoreTests: XCTestCase, @unchecked Sendable {
         )
     }
 }
+
+private struct SimulatedAtomicWriteError: Error {}
