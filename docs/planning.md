@@ -2327,3 +2327,83 @@ Evidência final desta rodada:
 | revisão independente final | sem achados bloqueadores após correções e regressões específicas |
 
 Estado: implementação concluída e validada para o Build Beacon build 6.
+
+### 28.28 Incremento entregue: migração schema 4 para 5 e troca local segura
+
+Incidente de referência:
+
+- uma troca local encontrou configuração persistida em schema 4;
+- o build candidato usava schema 5, mas o migrador possuía rotas explícitas
+  apenas para schemas 1, 2 e 3;
+- a persistência falhou de modo conservador, preservou o arquivo e seu backup e
+  não alterou o Keychain, porém a sessão não recuperou conta e monitores;
+- o gate de instalação limpa não detectou a lacuna porque criou diretamente um
+  estado no schema corrente;
+- nenhum dado privado, caminho pessoal, identificador real ou segredo faz parte
+  deste registro.
+
+Escopo implementado:
+
+- persistência: foram criados tipos históricos imutáveis para o envelope e a
+  configuração v4, sem reutilizar o modelo corrente como contrato de migração;
+- migração: foi adicionada rota explícita e determinística do schema 4 para 5,
+  com backup anterior à primeira escrita e falha sem overwrite quando o payload
+  não satisfizer invariantes;
+- defaults: novos campos do schema 5 permanecem em valores seguros, com Action
+  Mode e allowlist de mutação desligados, sem alterar preferências já existentes;
+- fixture: uma cópia sanitizada representativa da topologia local real preserva
+  quantidades, tipos de target, flags e relações, mas substitui conta, e-mail,
+  workspace, repositório, branch, caminhos e demais valores privados por dados
+  sintéticos; tokens e conteúdo de commit ficam excluídos;
+- operação local: build e schemas atuais foram inventariados antes da troca; o
+  bundle e a persistência compatível foram preservados para rollback como par;
+- QA: upgrade e rollback foram testados, e conta e monitores foram confirmados
+  após o lançamento com o Keychain intacto;
+- documentação: somente versões, resultados e contagens sanitizadas são
+  registradas, nunca payloads, valores de conta, nomes privados ou caminhos
+  pessoais.
+
+Critérios de aceite verificados:
+
+- schema 4 válido migra para schema 5 e cria backup com permissões restritivas
+  antes de substituir o arquivo;
+- a migração preserva identidade lógica da conta, conjunto e targets dos
+  monitores, favoritos, visibilidade, marcação de produção, preferências de
+  apresentação, notificações, histórico, atividade não vista e esperas de
+  aprovação representadas no schema 4;
+- campos exclusivos do schema 5 recebem defaults documentados e seguros, sem
+  habilitar ação remota por migração;
+- payload v4 inválido, corrompido ou incompatível continua fail-closed, mantém o
+  original recuperável e não permite save parcial;
+- testes usam fixture sanitizada com a mesma forma relevante do estado de
+  upgrade, além de casos mínimos, corrupção e schema futuro;
+- o gate executa upgrade sobre uma cópia do estado anterior e não considera
+  instalação limpa como evidência suficiente;
+- o backup registra versão/build do app e schema da configuração, sem copiar ou
+  revelar itens do Keychain;
+- rollback restaura bundle e configuração compatíveis e confirma que o app
+  anterior volta a abrir o estado esperado;
+- depois do lançamento do candidato, uma verificação explícita confirma a conta
+  esperada e todos os monitores antes da promoção;
+- falha em migração, upgrade, lançamento, confirmação ou rollback interrompe a
+  substituição e restaura o par preservado.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| rollback real | build 5 com schema 4 carregou a conta e 11 monitores |
+| migração representativa opt-in | cópia sanitizada da topologia real com 11 monitores migrou para schema 5 |
+| `swift test --quiet` | 315 testes executados, 0 falhas; 3 testes opt-in omitidos |
+| `swift build -c release` | aprovado |
+| localizações e diff | catálogos aprovados e validação de diff sem erro |
+| bundle e assinatura | universal `arm64` e `x86_64`; `codesign --verify --deep --strict` aprovado |
+| DMG e SHA-256 | artefato e sidecar aprovados |
+| instalação local | build 7 instalado; schema 5, conta presente, 11 monitores e flags de ação `false` |
+| Keychain | itens esperados permaneceram presentes durante upgrade e rollback |
+| backup recuperável | diretório `0700`, arquivos `0600`; caso de backup idêntico corrigido para reafirmar `0600` |
+| QA visual | dashboard conectado confirmado na aplicação instalada |
+
+Estado: implementação concluída e validada para o Build Beacon build 7. A rota
+schema 4 para 5, o upgrade representativo, o rollback compatível e os gates de
+distribuição foram aprovados.

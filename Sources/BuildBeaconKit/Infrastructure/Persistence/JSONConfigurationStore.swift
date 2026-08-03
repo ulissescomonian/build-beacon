@@ -18,11 +18,25 @@ public actor JSONConfigurationStore: ConfigurationStore {
     public let fileURL: URL
 
     private let fileManager: FileManager
+    private let atomicWriter: @Sendable (Data, URL) throws -> Void
     private var recoveryRequired = false
 
     public init(fileURL: URL, fileManager: FileManager = .default) {
         self.fileURL = fileURL
         self.fileManager = fileManager
+        self.atomicWriter = { data, url in
+            try data.write(to: url, options: [.atomic])
+        }
+    }
+
+    init(
+        fileURL: URL,
+        fileManager: FileManager = .default,
+        atomicWriter: @escaping @Sendable (Data, URL) throws -> Void
+    ) {
+        self.fileURL = fileURL
+        self.fileManager = fileManager
+        self.atomicWriter = atomicWriter
     }
 
     public init(
@@ -43,6 +57,9 @@ public actor JSONConfigurationStore: ConfigurationStore {
             .appendingPathComponent(directoryName, isDirectory: true)
             .appendingPathComponent(Self.defaultFileName, isDirectory: false)
         self.fileManager = fileManager
+        self.atomicWriter = { data, url in
+            try data.write(to: url, options: [.atomic])
+        }
     }
 
     public func load() async throws -> AppConfiguration {
@@ -185,6 +202,14 @@ public actor JSONConfigurationStore: ConfigurationStore {
             )
         }
         switch detectedVersion {
+        case 4:
+            recoveryRequired = true
+            let persisted = try decoder().decode(PersistedConfigurationV4.self, from: data)
+            let migrated = try Self.normalized(AppConfiguration(legacyV4: persisted.configuration))
+            _ = try backupOnce(suffix: "v4", matching: data)
+            try write(PersistedConfiguration(configuration: migrated))
+            recoveryRequired = false
+            return migrated
         case 3:
             let persisted = try decoder().decode(PersistedConfigurationV3.self, from: data)
             let migrated = try Self.normalized(AppConfiguration(legacyV3: persisted.configuration))
@@ -231,8 +256,38 @@ public actor JSONConfigurationStore: ConfigurationStore {
             )
             try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
             let data = try encoder().encode(persisted)
-            try data.write(to: fileURL, options: [.atomic])
+            try atomicWriter(data, fileURL)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        } catch let error as ConfigurationStoreError {
+            throw error
+        } catch let error as NSError {
+            throw ConfigurationStoreError.fileSystem(code: error.code)
+        }
+    }
+
+    private func backupOnce(suffix: String, matching currentData: Data) throws -> URL {
+        let directory = fileURL.deletingLastPathComponent()
+        let base = fileURL.deletingPathExtension().lastPathComponent
+        let prefix = "\(base).backup-\(suffix)-"
+        let requiredExtension = fileURL.pathExtension
+        do {
+            let existing = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            ).filter { candidate in
+                candidate.lastPathComponent.hasPrefix(prefix)
+                    && candidate.pathExtension == requiredExtension
+            }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            if let identical = existing.first(where: { candidate in
+                (try? Data(contentsOf: candidate, options: [.mappedIfSafe])) == currentData
+            }) {
+                try fileManager.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: identical.path
+                )
+                return identical
+            }
+            return try backup(suffix: suffix)
         } catch let error as ConfigurationStoreError {
             throw error
         } catch let error as NSError {
@@ -362,6 +417,42 @@ private struct PersistedSchemaVersion: Codable, Sendable {
     let schemaVersion: Int
 }
 
+/// Schema 4 contains every durable configuration preference introduced before
+/// pull request actions. Its monitor representation deliberately excludes the
+/// schema 5 opt-in flag so migration never relies on lenient current decoding.
+private struct PersistedConfigurationV4: Codable, Sendable {
+    let schemaVersion: Int
+    let configuration: LegacyAppConfigurationV4
+}
+
+private struct LegacyAppConfigurationV4: Codable, Sendable {
+    let account: AccountProfile?
+    let monitors: [LegacyMonitorConfigurationV4]
+    let refreshIntervalSeconds: Int
+    let notificationsEnabled: Bool
+    let notifyOnFailure: Bool
+    let notifyOnRecovery: Bool
+    let notifyOnApproval: Bool
+    let notifyOnFavoriteSuccess: Bool
+    let monitorPresentation: MonitorPresentationPreferences
+    let historyEnabled: Bool
+    let unseenActivity: [MonitorActivityMarker]
+    let approvalWaits: [ApprovalWaitMarker]
+    let approvalReminderInterval: ApprovalReminderInterval
+}
+
+private struct LegacyMonitorConfigurationV4: Codable, Sendable {
+    let id: MonitorID
+    let workspaceSlug: String
+    let workspaceName: String
+    let repositorySlug: String
+    let repositoryName: String
+    let projectName: String?
+    let isPinned: Bool
+    let isHidden: Bool
+    let isProduction: Bool
+}
+
 /// The explicit v2 representation preserves the exact historical payload so
 /// schema 3 can add activity preferences without weakening strict current
 /// schema decoding.
@@ -433,6 +524,37 @@ private struct LegacyMonitorConfigurationV1: Codable, Sendable {
 }
 
 private extension AppConfiguration {
+    init(legacyV4: LegacyAppConfigurationV4) {
+        self.init(
+            account: legacyV4.account,
+            monitors: legacyV4.monitors.map {
+                MonitorConfiguration(
+                    id: $0.id,
+                    workspaceSlug: $0.workspaceSlug,
+                    workspaceName: $0.workspaceName,
+                    repositorySlug: $0.repositorySlug,
+                    repositoryName: $0.repositoryName,
+                    projectName: $0.projectName,
+                    isPinned: $0.isPinned,
+                    isHidden: $0.isHidden,
+                    isProduction: $0.isProduction,
+                    allowsPullRequestActions: false
+                )
+            },
+            refreshIntervalSeconds: legacyV4.refreshIntervalSeconds,
+            notificationsEnabled: legacyV4.notificationsEnabled,
+            notifyOnFailure: legacyV4.notifyOnFailure,
+            notifyOnRecovery: legacyV4.notifyOnRecovery,
+            notifyOnApproval: legacyV4.notifyOnApproval,
+            notifyOnFavoriteSuccess: legacyV4.notifyOnFavoriteSuccess,
+            monitorPresentation: legacyV4.monitorPresentation,
+            historyEnabled: legacyV4.historyEnabled,
+            unseenActivity: legacyV4.unseenActivity,
+            approvalWaits: legacyV4.approvalWaits,
+            approvalReminderInterval: legacyV4.approvalReminderInterval
+        )
+    }
+
     init(legacyV3: LegacyAppConfigurationV3) {
         self.init(
             account: legacyV3.account,

@@ -1621,3 +1621,71 @@ conservador de respostas malformadas depois de qualquer POST, a revalidação de
 identidade antes de cada mutação e mensagens de resultado que não afirmam um
 estado remoto sem confirmação. O Build Beacon build 6 foi instalado e iniciado
 em `/Applications`, com os bundles anteriores preservados em backups locais.
+
+### 21.28 Troca local é upgrade versionado, não instalação limpa
+
+**Decisão em 3 de agosto de 2026.** Toda substituição do Build Beacon em
+`/Applications` passa a ser tratada como uma atualização sobre estado
+persistido. Antes da troca, o processo identifica a versão e o build instalados
+e lê somente os números de schema dos arquivos locais. O bundle anterior e o
+conjunto compatível de configuração e persistência são preservados como backup
+recuperável. O Keychain permanece no lugar e não é exportado, copiado, removido
+ou regravado durante upgrade ou rollback.
+
+O gate de migração usa uma cópia isolada e sanitizada que mantém a topologia
+representativa do estado real, incluindo quantidade e tipos de monitores,
+preferências, flags, marcadores e relações entre identificadores. Nomes de
+conta, e-mails, workspaces, repositórios, branches, caminhos pessoais, conteúdo
+de commits e qualquer outro dado privado são substituídos por valores
+sintéticos. Tokens não fazem parte da cópia, pois continuam exclusivamente no
+Keychain. Instalação limpa permanece útil, mas nunca autoriza promoção sozinha.
+
+Upgrade e rollback são validados antes da aceitação. O upgrade parte da cópia
+do estado anterior e precisa preservar a configuração esperada no novo schema.
+O rollback restaura o app anterior junto com uma configuração que ele consiga
+ler, pois restaurar somente o bundle pode deixar um app antigo diante de um
+schema futuro. Depois do lançamento do candidato, a aceitação exige confirmar
+a identidade da conta e o conjunto de monitores, sem expor seus valores em log
+ou documentação.
+
+#### Incidente local de schema 4 para 5
+
+Durante uma troca local de build, uma configuração existente em schema 4 foi
+aberta por um build que gravava schema 5. O carregador reconheceu que o arquivo
+era anterior, mas sua tabela de migração possuía rotas explícitas apenas para
+schemas 1, 2 e 3. O schema 4 caiu no caminho conservador de recuperação. O app
+não sobrescreveu a configuração e manteve backup, mas não conseguiu restaurar a
+conta e os monitores na sessão atual. O Keychain permaneceu preservado e não
+houve mutação remota ou exposição de segredo.
+
+O incidente não apareceu no gate baseado em instalação limpa porque esse fluxo
+criava diretamente o schema novo. A lacuna foi de cobertura de upgrade e do
+procedimento de promoção, não uma justificativa para relaxar o fail-closed da
+persistência. A correção implementada adiciona uma representação histórica
+explícita do schema 4, uma rota determinística 4 para 5, backup anterior à
+escrita e testes com fixture sanitizada representativa. Campos introduzidos no
+schema 5 recebem defaults seguros, especialmente permissões de ação remota
+desligadas, enquanto conta, monitores, preferências e estado local compatível
+são preservados.
+
+Alternativas rejeitadas: decodificar qualquer schema antigo diretamente no
+modelo corrente, pois mudanças futuras alterariam silenciosamente migrações já
+publicadas; editar manualmente o número do schema, pois isso mascara diferenças
+estruturais; apagar a configuração e depender do Keychain, pois perderia
+monitores e preferências; e aceitar somente o teste de instalação limpa, que não
+exercita o estado que será substituído.
+
+A validação final comprovou os dois sentidos da troca. O rollback para o build
+5 com schema 4 carregou a conta e 11 monitores. A migração opt-in sobre uma
+cópia sanitizada da topologia real, também com 11 monitores, converteu o estado
+para schema 5 sem habilitar flags de ação. A revisão final corrigiu ainda o caso
+de backup já idêntico para reafirmar permissão `0600`; o diretório recuperável
+permanece `0700` e seus arquivos, `0600`.
+
+O gate consolidado executou 315 testes sem falhas, com 3 testes opt-in omitidos.
+Build release, localizações, validação de diff, bundle universal `arm64` e
+`x86_64`, `codesign --verify --deep --strict`, DMG e SHA-256 foram aprovados. O
+build 7 foi instalado com schema 5, conta presente, 11 monitores, flags de ação
+desligadas e itens esperados no Keychain. O QA visual confirmou o dashboard
+conectado. As evidências preservam somente versões, schemas, contagens e
+resultados, sem PII, nomes privados ou caminhos pessoais.

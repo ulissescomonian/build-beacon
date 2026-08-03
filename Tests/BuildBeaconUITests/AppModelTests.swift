@@ -54,6 +54,104 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(runtime.monitoringStarts, 1)
     }
 
+    func testConfigurationStoreFailuresAtStartupUseSafeLocalizedMessages() async {
+        let cases: [(ConfigurationStoreError, String)] = [
+            (
+                .corrupted(quarantineURL: URL(fileURLWithPath: "/private/sensitive/configuration.corrupt")),
+                "Build Beacon could not read the saved configuration. A recovery copy was preserved, and configuration changes are paused until it is recovered."
+            ),
+            (
+                .unsupportedSchema(found: 99, supported: 2),
+                "The saved configuration was created by a newer Build Beacon version. It was preserved unchanged. Update Build Beacon before making configuration changes."
+            ),
+            (
+                .recoveryRequired,
+                "The saved configuration requires recovery. Build Beacon preserved it and paused configuration changes. Recover the configuration before trying to save again."
+            ),
+            (
+                .invalidConfiguration(reason: "private internal validation detail"),
+                "Build Beacon could not save these configuration changes because the resulting data was invalid. The previously saved configuration was preserved."
+            ),
+            (
+                .fileSystem(code: 513),
+                "Build Beacon could not access the local configuration file. Existing data was not reset. Check this Mac's storage permissions and try again."
+            ),
+        ]
+
+        for (error, key) in cases {
+            let runtime = RuntimeStub(configuration: AppConfiguration())
+            runtime.loadError = error
+            let model = AppModel(runtime: runtime)
+
+            await model.start()
+
+            XCTAssertEqual(model.errorMessage, String(localized: String.LocalizationValue(key), bundle: .module))
+            XCTAssertEqual(runtime.loadCalls, 1)
+            XCTAssertEqual(runtime.monitoringStarts, 0)
+            XCTAssertFalse(model.isConnected)
+            assertNoConfigurationErrorLeak(in: model.errorMessage)
+        }
+    }
+
+    func testRecoveryRequiredDuringSaveRollsBackAndUsesSafeMessage() async {
+        let runtime = RuntimeStub(configuration: AppConfiguration(refreshIntervalSeconds: 60))
+        let model = AppModel(runtime: runtime)
+        await model.start()
+        runtime.saveConfigurationError = ConfigurationStoreError.recoveryRequired
+
+        await model.setRefreshInterval(120)
+
+        XCTAssertEqual(model.refreshIntervalSeconds, 60)
+        XCTAssertEqual(
+            model.errorMessage,
+            String(
+                localized: "The saved configuration requires recovery. Build Beacon preserved it and paused configuration changes. Recover the configuration before trying to save again.",
+                bundle: .module
+            )
+        )
+        assertNoConfigurationErrorLeak(in: model.errorMessage)
+    }
+
+    func testInvalidConfigurationDuringSaveDoesNotExposeInternalReason() async {
+        let runtime = RuntimeStub(configuration: AppConfiguration(refreshIntervalSeconds: 60))
+        let model = AppModel(runtime: runtime)
+        await model.start()
+        runtime.saveConfigurationError = ConfigurationStoreError.invalidConfiguration(
+            reason: "monitor slugs must not be empty"
+        )
+
+        await model.setRefreshInterval(120)
+
+        XCTAssertEqual(model.refreshIntervalSeconds, 60)
+        XCTAssertEqual(
+            model.errorMessage,
+            String(
+                localized: "Build Beacon could not save these configuration changes because the resulting data was invalid. The previously saved configuration was preserved.",
+                bundle: .module
+            )
+        )
+        XCTAssertFalse(model.errorMessage?.contains("monitor slugs") == true)
+        assertNoConfigurationErrorLeak(in: model.errorMessage)
+    }
+
+    func testConfigurationStoreMessagesExistInEnglishAndBrazilianPortugueseWithCatalogParity() throws {
+        let keys = [
+            "Build Beacon could not read the saved configuration. A recovery copy was preserved, and configuration changes are paused until it is recovered.",
+            "The saved configuration was created by a newer Build Beacon version. It was preserved unchanged. Update Build Beacon before making configuration changes.",
+            "The saved configuration requires recovery. Build Beacon preserved it and paused configuration changes. Recover the configuration before trying to save again.",
+            "Build Beacon could not save these configuration changes because the resulting data was invalid. The previously saved configuration was preserved.",
+            "Build Beacon could not access the local configuration file. Existing data was not reset. Check this Mac's storage permissions and try again.",
+        ]
+        let english = try localizedCatalog("en")
+        let portuguese = try localizedCatalog("pt-BR")
+
+        XCTAssertEqual(Set(english.keys), Set(portuguese.keys))
+        for key in keys {
+            XCTAssertFalse(try XCTUnwrap(english[key]).isEmpty)
+            XCTAssertFalse(try XCTUnwrap(portuguese[key]).isEmpty)
+        }
+    }
+
     func testCancellingInitialStartWaiterDoesNotCancelWorkspaceDiscovery() async {
         let account = AccountProfile(
             id: AccountID(rawValue: "account"),
@@ -1622,6 +1720,34 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(message?.localizedCaseInsensitiveContains("error 6") == true, file: file, line: line)
         XCTAssertFalse(message?.localizedCaseInsensitiveContains("error n") == true, file: file, line: line)
     }
+
+    private func assertNoConfigurationErrorLeak(
+        in message: String?,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        assertNoTechnicalErrorLeak(in: message, file: file, line: line)
+        XCTAssertFalse(message?.contains("ConfigurationStoreError") == true, file: file, line: line)
+        XCTAssertFalse(message?.contains("/private/") == true, file: file, line: line)
+        XCTAssertFalse(message?.contains("513") == true, file: file, line: line)
+        XCTAssertFalse(message?.contains("99") == true, file: file, line: line)
+        XCTAssertFalse(message?.contains("private internal") == true, file: file, line: line)
+    }
+
+    private func localizedCatalog(_ localization: String) throws -> [String: String] {
+        let path = try XCTUnwrap(
+            Bundle.module.path(
+                forResource: "Localizable",
+                ofType: "strings",
+                inDirectory: nil,
+                forLocalization: localization
+            )
+        )
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        return try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String]
+        )
+    }
 }
 
 private enum RuntimeStubError: Error {
@@ -1634,6 +1760,7 @@ private final class RuntimeStub: BuildBeaconRuntime {
     var monitoringStarts = 0
     var loadCalls = 0
     var loadFailuresRemaining = 0
+    var loadError: (any Error)?
     var workspaceDiscoveryFails = false
     var workspaceDiscoveryCalls = 0
     var workspaces: [WorkspaceInfo] = []
@@ -1692,8 +1819,9 @@ private final class RuntimeStub: BuildBeaconRuntime {
         }
         if loadFailuresRemaining > 0 {
             loadFailuresRemaining -= 1
-            throw RuntimeStubError.expectedFailure
+            throw loadError ?? RuntimeStubError.expectedFailure
         }
+        if let loadError { throw loadError }
         return configuration
     }
 
