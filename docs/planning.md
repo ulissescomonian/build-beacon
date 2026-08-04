@@ -2526,4 +2526,5 @@ Critérios antes de publicação:
   anteriores.
 
 Estado: gates de código, distribuição e QA concluídos para `1.0.0` build 8.
-Entrega aguardando integração no `main` e publicação como Preview 7.
+Entrega integrada no `main` e publicada como `v1.0.0-preview.7`, com DMG e
+sidecar SHA-256 verificados.
