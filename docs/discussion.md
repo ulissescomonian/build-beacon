@@ -1899,5 +1899,6 @@ e seu sidecar SHA-256, sem reutilizar ou substituir tags e assets anteriores.
 
 A validação executou 331 testes, com três integrações opt-in omitidas e nenhuma
 falha. Build release, localizações, `git diff --check`, bundle universal,
-assinatura estrita, DMG e sidecar SHA-256 foram aprovados. A candidata ainda
-deve ser integrada ao `main` antes da criação da tag e da prerelease.
+assinatura estrita, DMG e sidecar SHA-256 foram aprovados. A candidata foi
+integrada ao `main` e publicada como `v1.0.0-preview.9`, sem alterar tags ou
+assets de Previews anteriores.
