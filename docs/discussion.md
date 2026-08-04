@@ -1766,9 +1766,9 @@ publicação posterior recebe novo identificador e nunca reutiliza tag nem
 sobrescreve DMG ou sidecar já publicados.
 
 Como a publicação anterior foi `1.0.0 Preview 6`, esta entrega de fila e atalhos
-`Ready to Merge` é candidata a `1.0.0 Preview 7`, com build 8. A publicação
-permanece condicionada à integração no `main`. Os gates de código, distribuição
-e QA foram executados novamente com os metadados finais dessa candidata.
+`Ready to Merge` foi publicada como `1.0.0 Preview 7`, com build 8, depois da
+integração no `main`. Os gates de código, distribuição e QA foram executados
+novamente com os metadados finais dessa candidata.
 
 Foram descartadas a mudança automática da linha SemVer a cada entrega Preview,
 pois ela rompe a sequência de candidatas já publicada; a atualização de uma tag
