@@ -2613,7 +2613,7 @@ Estado: promoção concluída. O build 9 usa assinatura local estável, abriu so
 schema 5 com conta e 11 monitores preservados e concluiu um refresh manual. O
 item Keychain não foi exportado, copiado, removido, recriado ou substituído.
 
-### 28.33 Publicação pendente: `1.0.0 Preview 8`, build 9
+### 28.33 Publicação concluída: `1.0.0 Preview 8`, build 9
 
 Classificação da entrega:
 
@@ -2643,5 +2643,5 @@ Restrições de publicação:
   `v1.0.0-preview.8` ainda não existe e publicar DMG e SHA-256 novos, sem
   substituir tags ou assets anteriores.
 
-Estado: candidata pronta para commit, integração e publicação. A release ainda
-não foi criada.
+Estado: commit integrado ao `main` e prerelease `v1.0.0-preview.8` publicada
+com DMG e sidecar SHA-256 verificados.
