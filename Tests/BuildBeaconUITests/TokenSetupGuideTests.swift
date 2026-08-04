@@ -21,63 +21,88 @@ final class TokenSetupGuideTests: XCTestCase {
         XCTAssertEqual(TokenSetupGuide.officialInstructionsURL.path, "/bitbucket-cloud/docs/create-an-api-token")
     }
 
-    func testRequiredPermissionsAreExactlyTheFourReadOnlyPermissions() {
+    func testRecommendedPermissionsAreExactlyAllBitbucketReadPermissions() {
         XCTAssertEqual(
-            TokenSetupGuide.requiredPermissions,
+            TokenSetupGuide.recommendedPermissions,
             [
-                "User data — Read",
-                "Workspaces — Read",
-                "Repositories — Read",
-                "Pipelines — Read",
+                "Accounts (Read)",
+                "GPG keys (Read)",
+                "Issues (Read)",
+                "User data (Read)",
+                "Packages (Read)",
+                "Permissions (Read)",
+                "Pipelines (Read)",
+                "Projects (Read)",
+                "Pull requests (Read)",
+                "Repositories (Read)",
+                "Runners (Read)",
+                "Snippets (Read)",
+                "SSH keys (Read)",
+                "Tests (Read)",
+                "Users (Read)",
+                "Webhooks (Read)",
+                "Wikis (Read)",
+                "Workspaces (Read)",
             ]
         )
-        XCTAssertEqual(TokenSetupGuide.requiredPermissions.count, 4)
+        XCTAssertEqual(TokenSetupGuide.recommendedPermissions.count, 18)
     }
 
-    func testRequiredPermissionsNeverRequestWriteOrAdminAccess() {
-        let permissionText = TokenSetupGuide.requiredPermissions.joined(separator: " ").lowercased()
+    func testRecommendedPermissionsNeverRequestWriteOrAdminAccess() {
+        let permissionText = TokenSetupGuide.recommendedPermissions.joined(separator: " ").lowercased()
 
         XCTAssertFalse(permissionText.contains("write"))
         XCTAssertFalse(permissionText.contains("admin"))
     }
 
-    func testRequiredScopesAreExactlyTheFourReadOnlyBitbucketScopesInOrder() {
+    func testRecommendedScopesAreExactlyAllBitbucketReadScopesInOrder() {
         XCTAssertEqual(
-            TokenSetupGuide.requiredScopes,
+            TokenSetupGuide.recommendedScopes,
             [
-                "read:user:bitbucket",
-                "read:workspace:bitbucket",
-                "read:repository:bitbucket",
+                "read:account",
+                "read:gpg-key:bitbucket",
+                "read:issue:bitbucket",
+                "read:me",
+                "read:package:bitbucket",
+                "read:permission:bitbucket",
                 "read:pipeline:bitbucket",
+                "read:project:bitbucket",
+                "read:pullrequest:bitbucket",
+                "read:repository:bitbucket",
+                "read:runner:bitbucket",
+                "read:snippet:bitbucket",
+                "read:ssh-key:bitbucket",
+                "read:test:bitbucket",
+                "read:user:bitbucket",
+                "read:webhook:bitbucket",
+                "read:wiki:bitbucket",
+                "read:workspace:bitbucket",
             ]
         )
-        XCTAssertEqual(TokenSetupGuide.requiredScopes.count, 4)
-        XCTAssertEqual(TokenSetupGuide.requiredScopes.count, TokenSetupGuide.requiredPermissions.count)
+        XCTAssertEqual(TokenSetupGuide.recommendedScopes.count, 18)
+        XCTAssertEqual(TokenSetupGuide.recommendedScopes.count, TokenSetupGuide.recommendedPermissions.count)
     }
 
-    func testRequiredScopesNeverRequestWriteOrAdminAccess() {
-        let scopeText = TokenSetupGuide.requiredScopes.joined(separator: " ").lowercased()
+    func testRecommendedScopesNeverRequestWriteOrAdminAccess() {
+        let scopeText = TokenSetupGuide.recommendedScopes.joined(separator: " ").lowercased()
 
         XCTAssertFalse(scopeText.contains("write"))
         XCTAssertFalse(scopeText.contains("admin"))
+        XCTAssertTrue(TokenSetupGuide.recommendedScopes.allSatisfy { $0.hasPrefix("read:") })
     }
 
     func testClipboardTextContainsOnlyRequiredScopesWithoutCredentialMaterial() {
         let clipboardText = TokenSetupGuide.permissionsClipboardText
         let normalizedClipboardText = clipboardText.lowercased()
 
-        XCTAssertEqual(clipboardText, TokenSetupGuide.requiredScopes.joined(separator: "\n"))
+        XCTAssertEqual(clipboardText, TokenSetupGuide.recommendedScopes.joined(separator: "\n"))
         XCTAssertFalse(normalizedClipboardText.contains("token="))
         XCTAssertFalse(normalizedClipboardText.contains("secret="))
         XCTAssertFalse(normalizedClipboardText.contains("password="))
     }
 
-    func testOptionalPullRequestScopeIsReadOnlyAndNeverChangesTheRequiredTokenContract() {
-        XCTAssertEqual(TokenSetupGuide.optionalPullRequestScope, "read:pullrequest:bitbucket")
-        XCTAssertEqual(TokenSetupGuide.optionalPullRequestPermission, "Pull requests — Read (optional)")
-        XCTAssertFalse(TokenSetupGuide.requiredScopes.contains(TokenSetupGuide.optionalPullRequestScope))
-        XCTAssertEqual(TokenSetupGuide.permissionsClipboardText, TokenSetupGuide.requiredScopes.joined(separator: "\n"))
-        XCTAssertFalse(TokenSetupGuide.optionalPullRequestScope.lowercased().contains("write"))
-        XCTAssertFalse(TokenSetupGuide.optionalPullRequestScope.lowercased().contains("admin"))
+    func testPullRequestScopeIsIncludedInTheRecommendedTokenContract() {
+        XCTAssertTrue(TokenSetupGuide.recommendedScopes.contains("read:pullrequest:bitbucket"))
+        XCTAssertEqual(TokenSetupGuide.permissionsClipboardText, TokenSetupGuide.recommendedScopes.joined(separator: "\n"))
     }
 }

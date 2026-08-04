@@ -276,7 +276,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertFalse(connected)
         XCTAssertEqual(
             model.errorMessage,
-            "The token is valid but is missing a required Read permission. Create a Bitbucket API token with scopes and enable all four permissions shown above."
+            "The token is valid but is missing a required Read permission. Create a Bitbucket API token with scopes and enable all 18 recommended Read permissions shown above."
         )
         XCTAssertTrue(model.errorMessage?.localizedCaseInsensitiveContains("Bitbucket") == true)
         XCTAssertTrue(model.errorMessage?.localizedCaseInsensitiveContains("scopes") == true)

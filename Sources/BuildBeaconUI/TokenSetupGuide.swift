@@ -9,25 +9,47 @@ public enum TokenSetupGuide {
         string: "https://support.atlassian.com/bitbucket-cloud/docs/create-an-api-token/"
     )!
 
-    public static let requiredPermissions = [
-        "User data — Read",
-        "Workspaces — Read",
-        "Repositories — Read",
-        "Pipelines — Read",
+    public static let recommendedPermissions = [
+        "Accounts (Read)",
+        "GPG keys (Read)",
+        "Issues (Read)",
+        "User data (Read)",
+        "Packages (Read)",
+        "Permissions (Read)",
+        "Pipelines (Read)",
+        "Projects (Read)",
+        "Pull requests (Read)",
+        "Repositories (Read)",
+        "Runners (Read)",
+        "Snippets (Read)",
+        "SSH keys (Read)",
+        "Tests (Read)",
+        "Users (Read)",
+        "Webhooks (Read)",
+        "Wikis (Read)",
+        "Workspaces (Read)",
     ]
 
-    public static let requiredScopes = [
-        "read:user:bitbucket",
-        "read:workspace:bitbucket",
-        "read:repository:bitbucket",
+    public static let recommendedScopes = [
+        "read:account",
+        "read:gpg-key:bitbucket",
+        "read:issue:bitbucket",
+        "read:me",
+        "read:package:bitbucket",
+        "read:permission:bitbucket",
         "read:pipeline:bitbucket",
+        "read:project:bitbucket",
+        "read:pullrequest:bitbucket",
+        "read:repository:bitbucket",
+        "read:runner:bitbucket",
+        "read:snippet:bitbucket",
+        "read:ssh-key:bitbucket",
+        "read:test:bitbucket",
+        "read:user:bitbucket",
+        "read:webhook:bitbucket",
+        "read:wiki:bitbucket",
+        "read:workspace:bitbucket",
     ]
 
-    /// This scope is deliberately optional. Pipeline monitoring works with the four
-    /// required scopes above, while this adds pull-request context for tokens that
-    /// choose to grant it.
-    public static let optionalPullRequestPermission = "Pull requests — Read (optional)"
-    public static let optionalPullRequestScope = "read:pullrequest:bitbucket"
-
-    public static let permissionsClipboardText = requiredScopes.joined(separator: "\n")
+    public static let permissionsClipboardText = recommendedScopes.joined(separator: "\n")
 }
