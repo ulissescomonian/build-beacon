@@ -19,7 +19,7 @@ that bypasses AppKit/SwiftUI conventions.
   reverse.
 - `Tests/BuildBeaconKitTests` and `Tests/BuildBeaconUITests`: deterministic unit
   and presentation tests. Add or update tests with every behavior change. The
-  current baseline is 328 executed tests; update public counts after legitimate
+  current baseline is 331 executed tests; update public counts after legitimate
   additions or removals, and never delete coverage merely to hide a failure.
 
 Keep boundaries explicit. New network, persistence, clock, notification, or
@@ -56,8 +56,7 @@ Preview increment.
 
 While distribution remains ad-hoc signed and unnotarized, publish GitHub
 releases as prereleases using the next fresh `v<version>-preview.<number>` tag.
-Never
-reuse a published tag or replace its assets. Confirm that the tag targets the
+Never reuse a published tag or replace its assets. Confirm that the tag targets the
 integrated `main` commit and that the release title, notes, DMG filename, bundle
 version, architectures, signature verification, and SHA-256 sidecar all agree.
 
@@ -82,6 +81,15 @@ bundle, and confirm that the expected account identity and monitor set are
 present before accepting the replacement. Test rollback as an app and config
 pair: an older app must receive a configuration version it supports. If upgrade
 or rollback validation fails, restore the preserved pair and stop promotion.
+
+A connected local installation must be upgraded with a stable code-signing
+identity resolved at execution time and never printed, documented by name, or
+versioned in the repository. Do not replace it with a newly ad-hoc-signed bundle:
+ad-hoc designated requirements are CDHash-based and change between builds,
+which can invalidate access to existing Keychain items. Treat the first move
+from an ad-hoc installed build to stable local signing as a migration with the
+same app-and-config rollback gate. If macOS requests Keychain authorization,
+hand control to the owner; never enter credentials or alter the Keychain item.
 
 The release bundle must include both `arm64` and `x86_64`, pass
 `codesign --verify --deep --strict`, and have a matching SHA-256 sidecar. A

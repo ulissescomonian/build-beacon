@@ -250,6 +250,13 @@ To create a universal `.app` bundle:
 ./scripts/build_app.sh
 ```
 
+When replacing an existing connected installation, sign local upgrade builds
+with the same stable code-signing identity on every build. Pass it through
+`SIGNING_IDENTITY` at execution time; do not store the identity in repository
+files. The default ad-hoc signature is suitable for isolated Preview artifacts,
+but its changing designated requirement is not a safe upgrade path for an app
+that must retain access to existing Keychain credentials.
+
 The bundle is written to `dist/Build Beacon.app`. To package the bundle as a DMG:
 
 ```bash
@@ -260,7 +267,7 @@ Packaging creates a local artifact; it does not publish a release, notarize the 
 
 ## Testing
 
-The current suite contains **251 executed tests**, with **0 failures** and **1 opt-in Keychain test skipped** when the local security environment does not permit it.
+The current suite contains **331 executed tests**, with **0 failures** and **3 opt-in integration tests skipped** when the local environment does not permit them.
 
 ```bash
 swift test

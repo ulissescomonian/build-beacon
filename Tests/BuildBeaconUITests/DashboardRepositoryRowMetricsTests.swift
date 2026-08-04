@@ -12,6 +12,20 @@ final class DashboardRepositoryRowMetricsTests: XCTestCase {
         XCTAssertTrue(DashboardRepositoryRowMetrics.metadataColumnWidth.isFinite)
     }
 
+    func testRepositoryRowMinimumHeightExpandsForInlineAction() {
+        XCTAssertEqual(DashboardRepositoryRowMetrics.minimumHeight(hasInlineAction: false), 64)
+        XCTAssertEqual(DashboardRepositoryRowMetrics.minimumHeight(hasInlineAction: true), 84)
+    }
+
+    func testRepositoryRowLayoutRevisionChangesOnlyWhenInlineActionChanges() {
+        let compactRevision = DashboardRepositoryRowMetrics.layoutRevision(hasInlineAction: false)
+        let actionRevision = DashboardRepositoryRowMetrics.layoutRevision(hasInlineAction: true)
+
+        XCTAssertEqual(compactRevision, DashboardRepositoryRowMetrics.layoutRevision(hasInlineAction: false))
+        XCTAssertEqual(actionRevision, DashboardRepositoryRowMetrics.layoutRevision(hasInlineAction: true))
+        XCTAssertNotEqual(compactRevision, actionRevision)
+    }
+
     func testFavoriteReorderAnimationDurationIsShortAndValid() {
         XCTAssertEqual(DashboardRepositoryRowMetrics.favoriteReorderAnimationDuration, 0.18)
         XCTAssertGreaterThan(DashboardRepositoryRowMetrics.favoriteReorderAnimationDuration, 0)

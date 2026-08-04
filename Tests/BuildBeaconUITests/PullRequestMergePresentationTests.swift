@@ -47,6 +47,24 @@ final class PullRequestMergePresentationTests: XCTestCase {
         )
     }
 
+    func testSuccessfulPullRequestWithDurationAndMissingActionModeKeepsMetadataAndConfigurationAction() throws {
+        let startedAt = Date(timeIntervalSinceReferenceDate: 1_000)
+        let completedAt = startedAt.addingTimeInterval(238)
+        let observation = observation(startedAt: startedAt, completedAt: completedAt)
+
+        let summary = DashboardRunSummaryPresentation.display(for: observation.lastKnownRun)
+        let readiness = PullRequestMergePresentation.readiness(
+            for: observation,
+            actionsConfigured: false
+        )
+
+        XCTAssertNotNil(summary.duration)
+        XCTAssertEqual(summary.metadata, summary.duration)
+        XCTAssertTrue(readiness.isReady)
+        XCTAssertTrue(readiness.hasAction)
+        XCTAssertEqual(readiness.action, .configureActions)
+    }
+
     func testIneligiblePullRequestHasNoBadgeTargetOrAction() {
         let display = PullRequestMergePresentation.readiness(for: observation(phase: .failed))
 
@@ -259,7 +277,9 @@ final class PullRequestMergePresentationTests: XCTestCase {
             title: "Ready",
             state: "OPEN",
             sourceCommitHash: "abcdef1234567890"
-        )
+        ),
+        startedAt: Date? = nil,
+        completedAt: Date? = nil
     ) -> MonitorObservation {
         let id = MonitorID(
             accountID: AccountID(rawValue: "account"),
@@ -282,6 +302,8 @@ final class PullRequestMergePresentationTests: XCTestCase {
             phase: phase,
             origin: origin,
             commitHash: "abcdef1234567890",
+            startedAt: startedAt,
+            completedAt: completedAt,
             pullRequest: pullRequest
         )
         return MonitorObservation(
