@@ -10,6 +10,7 @@ final class PullRequestMergePresentationTests: XCTestCase {
         XCTAssertEqual(display.target?.pullRequestID, 45)
         XCTAssertEqual(display.badgeTitle, String(localized: "Ready to merge", bundle: .module))
         XCTAssertTrue(display.accessibilityLabel?.contains("45") == true)
+        XCTAssertEqual(display.action, .approveAndMerge)
     }
 
     func testAwaitingPipelineApprovalNeverAppearsReadyToMerge() {
@@ -19,17 +20,80 @@ final class PullRequestMergePresentationTests: XCTestCase {
         XCTAssertNil(display.badgeTitle)
     }
 
-    func testDisabledMonitorNeverAppearsReadyToMerge() {
-        XCTAssertFalse(PullRequestMergePresentation.readiness(for: observation(actionsAllowed: false)).isReady)
+    func testDisabledMonitorIsReadyAndOffersEnableAndReview() throws {
+        let display = PullRequestMergePresentation.readiness(for: observation(actionsAllowed: false))
+
+        XCTAssertTrue(display.isReady)
+        XCTAssertEqual(display.target?.pullRequestID, 45)
+        XCTAssertEqual(display.action, .enableAndReview)
+        XCTAssertEqual(
+            PullRequestMergePresentation.actionTitle(try XCTUnwrap(display.action)),
+            String(localized: "Enable and review…", bundle: .module)
+        )
     }
 
-    func testMissingActionsCredentialNeverAppearsReadyToMerge() {
-        XCTAssertFalse(
-            PullRequestMergePresentation.readiness(
-                for: observation(),
-                actionsConfigured: false
-            ).isReady
+    func testMissingActionsCredentialIsReadyAndOffersConfiguration() throws {
+        let display = PullRequestMergePresentation.readiness(
+            for: observation(),
+            actionsConfigured: false
         )
+
+        XCTAssertTrue(display.isReady)
+        XCTAssertEqual(display.target?.pullRequestID, 45)
+        XCTAssertEqual(display.action, .configureActions)
+        XCTAssertEqual(
+            PullRequestMergePresentation.actionTitle(try XCTUnwrap(display.action)),
+            String(localized: "Set up approve and merge…", bundle: .module)
+        )
+    }
+
+    func testIneligiblePullRequestHasNoBadgeTargetOrAction() {
+        let display = PullRequestMergePresentation.readiness(for: observation(phase: .failed))
+
+        XCTAssertFalse(display.isReady)
+        XCTAssertFalse(display.hasAction)
+        XCTAssertNil(display.target)
+        XCTAssertNil(display.pullRequestID)
+        XCTAssertNil(display.badgeTitle)
+        XCTAssertNil(display.action)
+    }
+
+    func testMissingPullRequestContextOffersSetupWithoutReadiness() {
+        let display = PullRequestMergePresentation.readiness(for: observation(pullRequest: nil))
+
+        XCTAssertFalse(display.isReady)
+        XCTAssertTrue(display.hasAction)
+        XCTAssertNil(display.target)
+        XCTAssertEqual(display.pullRequestID, 45)
+        XCTAssertNil(display.badgeTitle)
+        XCTAssertEqual(display.action, .configureActions)
+    }
+
+    func testSuccessfulNonPullRequestStillOffersNoAction() {
+        let display = PullRequestMergePresentation.readiness(for: observation(origin: .branch(name: "develop")))
+
+        XCTAssertFalse(display.isReady)
+        XCTAssertFalse(display.hasAction)
+        XCTAssertNil(display.pullRequestID)
+        XCTAssertNil(display.action)
+    }
+
+    func testEachReadyActionProvidesAnAccessibleNextStep() throws {
+        let target = try XCTUnwrap(PullRequestMergePresentation.readiness(for: observation()).target)
+
+        for action in PullRequestMergeReadinessAction.allCases {
+            XCTAssertFalse(PullRequestMergePresentation.actionTitle(action).isEmpty)
+            XCTAssertFalse(PullRequestMergePresentation.actionSymbolName(action).isEmpty)
+            XCTAssertFalse(PullRequestMergePresentation.actionHelp(action).isEmpty)
+            XCTAssertFalse(PullRequestMergePresentation.actionAccessibilityHint(action).isEmpty)
+            XCTAssertFalse(
+                PullRequestMergePresentation.actionAccessibilityLabel(
+                    action: action,
+                    pullRequestID: target.pullRequestID,
+                    repositoryName: "bladecp hub"
+                ).isEmpty
+            )
+        }
     }
 
     func testConfirmationIncludesIdentityAndDestinationAsOneLocalizedSentence() {
@@ -133,8 +197,21 @@ final class PullRequestMergePresentationTests: XCTestCase {
             "Ready to merge",
             "%lld pull requests ready to merge",
             "Approve and merge…",
+            "Enable and review…",
+            "Set up approve and merge…",
+            "Review and confirm this pull request action",
+            "Enable pull request actions for this monitor",
+            "Configure Pull Request Actions in Settings",
+            "Enables pull request actions for this monitor. You can then review and confirm.",
+            "Opens Settings so you can configure Pull Request Actions.",
+            "Enable pull request actions for this monitor to review and approve and merge.",
+            "Configure Pull Request Actions in Settings to approve and merge.",
+            "Approve and merge pull request",
+            "Configure Pull Request Actions in Settings to identify this pull request before approving and merging.",
             "pullRequest.merge.ready.accessibility.format",
             "pullRequest.merge.action.accessibility.format",
+            "pullRequest.merge.enable.accessibility.format",
+            "pullRequest.merge.configure.accessibility.format",
             "pullRequest.merge.confirmation.message.format",
             "pullRequest.merge.success.commit.format",
             "pullRequest.merge.execution.detail.format",
@@ -171,7 +248,18 @@ final class PullRequestMergePresentationTests: XCTestCase {
 
     private func observation(
         phase: PipelinePhase = .succeeded,
-        actionsAllowed: Bool = true
+        actionsAllowed: Bool = true,
+        origin: PipelineRunOrigin = .pullRequest(
+            id: 45,
+            sourceBranch: "feature",
+            destinationBranch: "develop"
+        ),
+        pullRequest: PipelinePullRequestContext? = PipelinePullRequestContext(
+            id: 45,
+            title: "Ready",
+            state: "OPEN",
+            sourceCommitHash: "abcdef1234567890"
+        )
     ) -> MonitorObservation {
         let id = MonitorID(
             accountID: AccountID(rawValue: "account"),
@@ -192,14 +280,9 @@ final class PullRequestMergePresentationTests: XCTestCase {
             id: PipelineRunID(rawValue: "run"),
             buildNumber: 50,
             phase: phase,
-            origin: .pullRequest(id: 45, sourceBranch: "feature", destinationBranch: "develop"),
+            origin: origin,
             commitHash: "abcdef1234567890",
-            pullRequest: PipelinePullRequestContext(
-                id: 45,
-                title: "Ready",
-                state: "OPEN",
-                sourceCommitHash: "abcdef1234567890"
-            )
+            pullRequest: pullRequest
         )
         return MonitorObservation(
             monitor: monitor,

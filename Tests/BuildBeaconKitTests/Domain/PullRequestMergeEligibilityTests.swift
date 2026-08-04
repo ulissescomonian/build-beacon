@@ -45,9 +45,53 @@ final class PullRequestMergeEligibilityTests: XCTestCase {
         )
     }
 
+    func testCandidateIdentifiesSuccessfulPRWhenMonitorActionsAreDisabled() throws {
+        var disabledMonitor = makeMonitor()
+        disabledMonitor.allowsPullRequestActions = false
+        let observation = makeObservation(monitor: disabledMonitor)
+
+        let candidate = PullRequestMergeCandidateEvaluator.evaluate(observation)
+
+        guard case let .eligible(target) = candidate else {
+            return XCTFail("Expected a read-only merge candidate")
+        }
+        XCTAssertEqual(target.pullRequestID, 42)
+        XCTAssertEqual(target.expectedSourceCommitHash, "abc123")
+        XCTAssertEqual(
+            PullRequestMergeEligibilityEvaluator.evaluate(observation),
+            .ineligible(reason: .actionsDisabled)
+        )
+    }
+
+    func testCandidateFailsClosedWhenPullRequestContextIsMissingOrMismatched() {
+        let missingContext = MonitorObservation(
+            monitor: makeMonitor(),
+            lastKnownRun: PipelineRun(
+                id: PipelineRunID(rawValue: "run"),
+                buildNumber: 12,
+                phase: .succeeded,
+                origin: .pullRequest(id: 42, sourceBranch: "feature/actions", destinationBranch: "main"),
+                commitHash: "abc123"
+            )
+        )
+        let mismatchedContext = makeObservation(
+            pullRequestID: 24
+        )
+
+        XCTAssertEqual(
+            PullRequestMergeCandidateEvaluator.evaluate(missingContext),
+            .ineligible(reason: .missingPullRequestContext)
+        )
+        XCTAssertEqual(
+            PullRequestMergeCandidateEvaluator.evaluate(mismatchedContext),
+            .ineligible(reason: .pullRequestIdentityMismatch)
+        )
+    }
+
     private func makeObservation(
         monitor: MonitorConfiguration? = nil,
-        sourceCommitHash: String = "abc123"
+        sourceCommitHash: String = "abc123",
+        pullRequestID: Int = 42
     ) -> MonitorObservation {
         MonitorObservation(
             monitor: monitor ?? makeMonitor(),
@@ -62,7 +106,7 @@ final class PullRequestMergeEligibilityTests: XCTestCase {
                 ),
                 commitHash: "abc123",
                 pullRequest: PipelinePullRequestContext(
-                    id: 42,
+                    id: pullRequestID,
                     title: "Actions",
                     state: "OPEN",
                     sourceCommitHash: sourceCommitHash,

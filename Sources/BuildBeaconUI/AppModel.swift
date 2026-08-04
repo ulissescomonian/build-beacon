@@ -105,6 +105,9 @@ public final class AppModel {
     private var confirmedFavoriteState: [MonitorID: Bool] = [:]
     private var pullRequestActionGeneration = 0
     private var pullRequestActionTask: Task<Void, Never>?
+    /// Reserves the explicit monitor opt-in while it is being persisted, before
+    /// it can safely become a normal pull request action preflight.
+    private var pullRequestActionEnableReviewInFlight = false
     private var activePullRequestActionTarget: PullRequestActionTarget?
     private var pullRequestActionMutationConfirmed = false
 
@@ -661,6 +664,61 @@ public final class AppModel {
         } catch {
             errorMessage = Self.message(for: error)
         }
+    }
+
+    /// Explicitly opts one monitor into pull request actions and, only after the
+    /// opt-in is durable and the current snapshot still identifies the same PR
+    /// build, starts the existing read-only preflight flow.
+    @discardableResult
+    public func enablePullRequestActionsAndBeginReview(
+        for observation: MonitorObservation
+    ) async -> Task<Void, Never>? {
+        guard pullRequestActionTask == nil,
+              !pullRequestActionEnableReviewInFlight,
+              activePullRequestActionTarget == nil else { return nil }
+        guard pullRequestActionIsConfigured else {
+            pullRequestActionSheetState = .failed(error: .notConfigured)
+            return nil
+        }
+        guard let index = configuration.monitors.firstIndex(where: { $0.id == observation.monitor.id }) else {
+            pullRequestActionSheetState = .failed(error: .invalidTarget)
+            return nil
+        }
+
+        let candidateEligibility = PullRequestMergeCandidateEvaluator.evaluate(observation)
+        guard case let .eligible(expectedTarget) = candidateEligibility else {
+            pullRequestActionSheetState = .failed(
+                error: Self.pullRequestActionError(from: candidateEligibility)
+            )
+            return nil
+        }
+
+        // Set this before the first suspension point. A second click must not
+        // race the durable opt-in and start another preflight for this monitor.
+        pullRequestActionEnableReviewInFlight = true
+        defer { pullRequestActionEnableReviewInFlight = false }
+
+        if !configuration.monitors[index].allowsPullRequestActions {
+            let previous = configuration
+            configuration.monitors[index].allowsPullRequestActions = true
+            reconcileSnapshotWithCurrentConfiguration()
+            do {
+                try await persistCurrentConfiguration { [weak self] in
+                    self?.apply(configuration: previous)
+                }
+            } catch {
+                errorMessage = Self.message(for: error)
+                return nil
+            }
+        }
+
+        guard let currentObservation = snapshot?.observations[observation.monitor.id],
+              case let .eligible(currentTarget) = pullRequestMergeEligibility(for: currentObservation),
+              currentTarget == expectedTarget else {
+            pullRequestActionSheetState = .failed(error: .staleRun)
+            return nil
+        }
+        return beginPullRequestAction(for: currentObservation)
     }
 
     public func pullRequestMergeEligibility(

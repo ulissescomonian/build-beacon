@@ -19,7 +19,7 @@ that bypasses AppKit/SwiftUI conventions.
   reverse.
 - `Tests/BuildBeaconKitTests` and `Tests/BuildBeaconUITests`: deterministic unit
   and presentation tests. Add or update tests with every behavior change. The
-  current baseline is 170 executed tests; update public counts after legitimate
+  current baseline is 328 executed tests; update public counts after legitimate
   additions or removals, and never delete coverage merely to hide a failure.
 
 Keep boundaries explicit. New network, persistence, clock, notification, or
@@ -43,6 +43,23 @@ Build the distributable universal app and DMG with the repository scripts:
 env SIGNING_IDENTITY=- ./scripts/build_app.sh
 ./scripts/package_dmg.sh
 ```
+
+## Versioning and GitHub releases
+
+Every owner-requested GitHub publication that includes application changes or
+a new distributable app must increment `CFBundleVersion` monotonically and use
+the next Preview ordinal for the current product version. Keep
+`CFBundleShortVersionString` on the established product line until the owner
+explicitly chooses a new Semantic Versioning milestone. Documentation-only or
+governance-only pushes that do not publish an app do not require a build or
+Preview increment.
+
+While distribution remains ad-hoc signed and unnotarized, publish GitHub
+releases as prereleases using the next fresh `v<version>-preview.<number>` tag.
+Never
+reuse a published tag or replace its assets. Confirm that the tag targets the
+integrated `main` commit and that the release title, notes, DMG filename, bundle
+version, architectures, signature verification, and SHA-256 sidecar all agree.
 
 ## Local build replacement
 

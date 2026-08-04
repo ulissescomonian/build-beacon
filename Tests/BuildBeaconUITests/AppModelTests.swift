@@ -1143,6 +1143,219 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(runtime.configuration.monitors[0].allowsPullRequestActions)
     }
 
+    func testEnablePullRequestActionsAndBeginReviewPersistsThenStartsPreflight() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        var disabledMonitor = monitor
+        disabledMonitor.allowsPullRequestActions = false
+        let observation = pullRequestObservation(
+            monitor: disabledMonitor,
+            runID: "enable-review",
+            buildNumber: 14,
+            commitHash: "abc"
+        )
+        model.configuration.monitors = [disabledMonitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: observation)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+
+        let preflight = await model.enablePullRequestActionsAndBeginReview(for: observation)
+        await preflight?.value
+        let preflightCalls = await actions.preflightCallCount()
+
+        XCTAssertTrue(model.configuration.monitors[0].allowsPullRequestActions)
+        XCTAssertTrue(runtime.configuration.monitors[0].allowsPullRequestActions)
+        XCTAssertEqual(preflightCalls, 1)
+        guard case .confirmation = model.pullRequestActionSheetState else {
+            return XCTFail("Expected confirmation after persisted opt-in")
+        }
+    }
+
+    func testEnablePullRequestActionsAndBeginReviewRejectsMissingActionsTokenWithoutPersistence() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: false)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        var disabledMonitor = monitor
+        disabledMonitor.allowsPullRequestActions = false
+        let observation = pullRequestObservation(
+            monitor: disabledMonitor,
+            runID: "missing-token",
+            buildNumber: 15,
+            commitHash: "abc"
+        )
+        model.configuration.monitors = [disabledMonitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: observation)
+        await model.refresh()
+
+        let preflight = await model.enablePullRequestActionsAndBeginReview(for: observation)
+        let preflightCalls = await actions.preflightCallCount()
+
+        XCTAssertNil(preflight)
+        XCTAssertFalse(model.configuration.monitors[0].allowsPullRequestActions)
+        XCTAssertEqual(runtime.saveConfigurationCalls, 0)
+        XCTAssertEqual(preflightCalls, 0)
+        XCTAssertEqual(model.pullRequestActionSheetState, .failed(error: .notConfigured))
+    }
+
+    func testEnablePullRequestActionsAndBeginReviewRejectsInvalidCandidateWithoutPersistence() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        var disabledMonitor = monitor
+        disabledMonitor.allowsPullRequestActions = false
+        let observation = MonitorObservation(
+            monitor: disabledMonitor,
+            lastKnownRun: PipelineRun(
+                id: PipelineRunID(rawValue: "invalid-candidate"),
+                buildNumber: 16,
+                phase: .succeeded,
+                origin: .pullRequest(
+                    id: 42,
+                    sourceBranch: "feature/actions",
+                    destinationBranch: "main"
+                ),
+                commitHash: "abc"
+            )
+        )
+        model.configuration.monitors = [disabledMonitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: observation)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+
+        let preflight = await model.enablePullRequestActionsAndBeginReview(for: observation)
+        let preflightCalls = await actions.preflightCallCount()
+
+        XCTAssertNil(preflight)
+        XCTAssertFalse(model.configuration.monitors[0].allowsPullRequestActions)
+        XCTAssertEqual(runtime.saveConfigurationCalls, 0)
+        XCTAssertEqual(preflightCalls, 0)
+        XCTAssertEqual(model.pullRequestActionSheetState, .failed(error: .invalidTarget))
+    }
+
+    func testEnablePullRequestActionsAndBeginReviewRestoresDisabledMonitorWhenPersistenceFails() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        var disabledMonitor = monitor
+        disabledMonitor.allowsPullRequestActions = false
+        let observation = pullRequestObservation(
+            monitor: disabledMonitor,
+            runID: "persistence-failure",
+            buildNumber: 17,
+            commitHash: "abc"
+        )
+        model.configuration.monitors = [disabledMonitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: observation)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+        runtime.saveConfigurationError = RuntimeStubError.expectedFailure
+
+        let preflight = await model.enablePullRequestActionsAndBeginReview(for: observation)
+        let preflightCalls = await actions.preflightCallCount()
+
+        XCTAssertNil(preflight)
+        XCTAssertFalse(model.configuration.monitors[0].allowsPullRequestActions)
+        XCTAssertFalse(model.selectedObservation?.monitor.allowsPullRequestActions == true)
+        XCTAssertEqual(preflightCalls, 0)
+        XCTAssertNotNil(model.errorMessage)
+    }
+
+    func testEnablePullRequestActionsAndBeginReviewDoesNotPreflightWhenTargetChangesDuringPersistence() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        var disabledMonitor = monitor
+        disabledMonitor.allowsPullRequestActions = false
+        let original = pullRequestObservation(
+            monitor: disabledMonitor,
+            runID: "original-target",
+            buildNumber: 18,
+            commitHash: "abc"
+        )
+        model.configuration.monitors = [disabledMonitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: original)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+        runtime.suspendsConfigurationSave = true
+
+        let enabling = Task { @MainActor in
+            await model.enablePullRequestActionsAndBeginReview(for: original)
+        }
+        await runtime.waitForConfigurationSave()
+        let changed = pullRequestObservation(
+            monitor: disabledMonitor,
+            runID: "changed-target",
+            buildNumber: 19,
+            commitHash: "def"
+        )
+        runtime.refreshSnapshot = snapshot(observation: changed)
+        await model.refresh()
+        runtime.resumeConfigurationSave()
+        let preflight = await enabling.value
+        let preflightCalls = await actions.preflightCallCount()
+
+        XCTAssertNil(preflight)
+        XCTAssertEqual(preflightCalls, 0)
+        XCTAssertEqual(model.pullRequestActionSheetState, .failed(error: .staleRun))
+    }
+
+    func testEnablePullRequestActionsAndBeginReviewReservesSingleFlightBeforeDurableOptIn() async {
+        let (_, runtime, workspace) = makeConnectedModel()
+        let actions = PullRequestActionServiceStub(configured: true)
+        let model = AppModel(runtime: runtime, pullRequestActions: actions)
+        await model.start()
+        let monitor = pullRequestMonitor(in: workspace, accountID: model.configuration.account!.id)
+        var disabledMonitor = monitor
+        disabledMonitor.allowsPullRequestActions = false
+        let observation = pullRequestObservation(
+            monitor: disabledMonitor,
+            runID: "single-flight-opt-in",
+            buildNumber: 20,
+            commitHash: "abc"
+        )
+        model.configuration.monitors = [disabledMonitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = snapshot(observation: observation)
+        await model.refresh()
+        await model.refreshPullRequestActionConfigurationStatus()
+        runtime.suspendsConfigurationSave = true
+
+        let first = Task { @MainActor in
+            await model.enablePullRequestActionsAndBeginReview(for: observation)
+        }
+        await runtime.waitForConfigurationSave()
+        let second = await model.enablePullRequestActionsAndBeginReview(for: observation)
+        let beforeResumeCalls = await actions.preflightCallCount()
+
+        XCTAssertNil(second)
+        XCTAssertEqual(beforeResumeCalls, 0)
+        runtime.resumeConfigurationSave()
+        let firstPreflight = await first.value
+        await firstPreflight?.value
+        let afterResumeCalls = await actions.preflightCallCount()
+
+        XCTAssertEqual(afterResumeCalls, 1)
+        guard case .confirmation = model.pullRequestActionSheetState else {
+            return XCTFail("Expected exactly one confirmation after durable opt-in")
+        }
+    }
+
     func testDisablingGlobalNotificationsCancelsApprovalRemindersImmediately() async {
         let (model, runtime, workspace) = makeConnectedModel()
         let monitor = monitor(id: "reminder-global", in: workspace, accountID: model.configuration.account!.id)
@@ -2013,6 +2226,7 @@ private actor PullRequestActionServiceStub: PullRequestActionServicing {
     private var configured: Bool
     private var email: String?
     private var approveCalls = 0
+    private var preflightCalls = 0
     var outcome: PullRequestMergeOutcome = .merged(mergeCommitHash: "merged")
     var preflightError: PullRequestActionError?
     var actionError: PullRequestActionError?
@@ -2036,6 +2250,7 @@ private actor PullRequestActionServiceStub: PullRequestActionServicing {
     }
 
     func preflight(_ target: PullRequestActionTarget) async throws -> PullRequestMergePreflight {
+        preflightCalls += 1
         guard configured else { throw PullRequestActionError.notConfigured }
         if let preflightError { throw preflightError }
         return PullRequestMergePreflight(
@@ -2059,4 +2274,5 @@ private actor PullRequestActionServiceStub: PullRequestActionServicing {
 
     func configuredEmail() -> String? { email }
     func approveCallCount() -> Int { approveCalls }
+    func preflightCallCount() -> Int { preflightCalls }
 }

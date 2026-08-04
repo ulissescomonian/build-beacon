@@ -12,7 +12,7 @@ public struct PipelineDetailView: View {
     let openPipeline: (MonitorObservation) -> Void
     let openNotificationBuild: (Int) -> Void
     let openApproval: () -> Void
-    let beginMerge: () -> Void
+    let performMergeReadinessAction: () -> Void
     let openCommit: (PipelineRun) -> Void
     let openPullRequest: (PipelinePullRequestContext) -> Void
 
@@ -26,7 +26,7 @@ public struct PipelineDetailView: View {
         openURL: @escaping (MonitorObservation) -> Void,
         openNotificationBuild: @escaping (Int) -> Void = { _ in },
         openApproval: @escaping () -> Void = {},
-        beginMerge: @escaping () -> Void = {},
+        performMergeReadinessAction: @escaping () -> Void = {},
         openCommit: @escaping (PipelineRun) -> Void = { _ in },
         openPullRequest: @escaping (PipelinePullRequestContext) -> Void = { _ in }
     ) {
@@ -39,7 +39,7 @@ public struct PipelineDetailView: View {
         openPipeline = openURL
         self.openNotificationBuild = openNotificationBuild
         self.openApproval = openApproval
-        self.beginMerge = beginMerge
+        self.performMergeReadinessAction = performMergeReadinessAction
         self.openCommit = openCommit
         self.openPullRequest = openPullRequest
     }
@@ -102,19 +102,24 @@ public struct PipelineDetailView: View {
                 }
                 .accessibilityHint("Opens the pending build approval in Bitbucket")
             } else if let mergeReadiness,
-                      let target = mergeReadiness.target {
+                      mergeReadiness.hasAction,
+                      let action = mergeReadiness.action {
                 Button {
-                    beginMerge()
+                    performMergeReadinessAction()
                 } label: {
-                    Label("Approve and merge…", systemImage: "arrow.triangle.merge")
+                    Label(
+                        PullRequestMergePresentation.actionTitle(action),
+                        systemImage: PullRequestMergePresentation.actionSymbolName(action)
+                    )
                 }
                 .accessibilityLabel(
                     PullRequestMergePresentation.actionAccessibilityLabel(
-                        target: target,
+                        action: action,
+                        pullRequestID: mergeReadiness.pullRequestID,
                         repositoryName: observation.monitor.repositoryName
                     )
                 )
-                .accessibilityHint("Opens a confirmation. Nothing is merged until you confirm.")
+                .accessibilityHint(PullRequestMergePresentation.actionAccessibilityHint(action))
             }
         }
     }
@@ -227,12 +232,15 @@ public struct PipelineDetailView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Button("Approve and merge…") {
-                beginMerge()
+            if let action = display.action {
+                Button(PullRequestMergePresentation.actionTitle(action)) {
+                    performMergeReadinessAction()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(action == .approveAndMerge ? .green : .accentColor)
+                .help(PullRequestMergePresentation.actionHelp(action))
+                .accessibilityHint(PullRequestMergePresentation.actionAccessibilityHint(action))
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.green)
-            .accessibilityHint("Opens a confirmation. Nothing is merged until you confirm.")
         }
         .padding(12)
         .background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))

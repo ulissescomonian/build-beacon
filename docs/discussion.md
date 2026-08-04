@@ -1689,3 +1689,89 @@ build 7 foi instalado com schema 5, conta presente, 11 monitores, flags de açã
 desligadas e itens esperados no Keychain. O QA visual confirmou o dashboard
 conectado. As evidências preservam somente versões, schemas, contagens e
 resultados, sem PII, nomes privados ou caminhos pessoais.
+
+### 21.29 PR verde candidata e fila `Ready to Merge`
+
+**Decisão em 3 de agosto de 2026.** Uma PR cuja execução monitorada terminou
+com sucesso é uma candidata operacional para merge, mas essa observação não é
+uma autorização local para mutar o repositório. A descoberta da candidata e a
+capacidade de executar `Approve and merge` são estados separados: a primeira
+continua visível no dashboard mesmo quando Action Mode, credencial de ação ou
+opt-in por monitor ainda não existirem.
+
+O dashboard mostrará a fila e o badge `Ready to Merge` somente quando houver
+contexto remoto completo e atual que confirme a mesma PR `OPEN`, não draft,
+com source HEAD idêntico ao commit da execução `succeeded` mais recente e
+branches conhecidas. O badge é uma indicação de candidata pronta para revisão,
+não uma alegação de que o merge é permitido pelas regras finais do Bitbucket.
+Checks, revisores obrigatórios, conflitos e restrições podem continuar a
+bloquear o POST remoto e serão tratados pelo fluxo de ação. Um snapshot sem PR
+associada, sem HEAD, com relação ambígua entre PR e execução, ou com contexto
+desatualizado não recebe o rótulo `Ready to Merge`; ele mantém apenas o estado
+de execução conhecido, sem inferir prontidão.
+
+O CTA do item é contextual, sem ocultar a candidata por falta de permissão:
+`Approve and merge` aparece quando a ação já está configurada e o monitor foi
+explicitamente habilitado; `Enable and review` aparece quando falta somente o
+opt-in daquele monitor; `Set up approve and merge` aparece quando faltam Action
+Mode, credencial de ação ou o contexto de credenciais necessário. Os dois
+últimos CTAs levam à configuração ou revisão segura, não aprovam nem fazem
+merge. Quando a elegibilidade não puder ser estabelecida, a alternativa segue
+sendo abrir a PR no Bitbucket.
+
+O clique em `Approve and merge` preserva integralmente o contrato da seção
+21.27: ação foreground, confirmação humana por tentativa, dois preflights
+remotos completos e nenhum retry automático após POST. Polling, notificações,
+deep links, relaunch e a própria fila nunca acionam a mutação. Assim, a fila
+remove a navegação manual até a PR sem transformar uma pipeline verde em
+autorização implícita.
+
+Foram descartadas quatro alternativas: esconder candidatas até Action Mode ser
+configurado, pois mistura visibilidade operacional com permissão local; marcar
+qualquer pipeline verde como pronta, pois pode não haver PR aberta ou HEAD
+compatível; executar approve ou merge ao detectar sucesso, pois violaria a
+confirmação explícita; e manter apenas o link para Bitbucket, pois conserva o
+atrito que a ação segura já foi criada para eliminar.
+
+Evidência final: os testes cobriram a fila, os CTAs contextuais e a recusa de
+prontidão diante de contexto incompleto. Uma corrida do opt-in foi corrigida:
+o teste de single-flight comprova que nenhum preflight começa antes de a
+persistência da habilitação local ter terminado. Para uma PR bem-sucedida
+legada, mas sem contexto completo atual, a linha e a toolbar exibem somente
+`Set up approve and merge…`, sem badge `Ready to Merge` e sem target de
+mutação. A suíte executou 328 testes, sem falhas, com 3 integrações opt-in
+omitidas. Build release, catálogos en e pt-BR com paridade de chaves, validação
+de diff, bundle universal `arm64` e `x86_64`, assinatura estrita, DMG,
+validação `hdiutil` e SHA-256 foram refeitos e aprovados após as correções. O
+upgrade local do build 7 com schema 5 para o build 8 preservou a configuração
+no schema 5, a conta, 11 monitores e Action Mode e opt-ins existentes, sem
+exportar, copiar ou inspecionar segredos. O backup recuperável manteve diretório
+`0700` e arquivos `0600`. O QA da aplicação ativa confirmou dashboard conectado
+e atualizando, inclusive o CTA seguro na linha e na toolbar para PRs legadas
+sem contexto, sem fabricar uma alegação de prontidão.
+
+### 21.30 Versionamento de entregas e Preview ad-hoc
+
+**Decisão em 3 de agosto de 2026.** Toda publicação no GitHub que contenha uma
+mudança de aplicativo incrementa o número de build e o ordinal Preview da linha
+de produto atual. A versão SemVer do bundle permanece na linha estabelecida até
+uma decisão explícita de novo marco de produto. Pushes exclusivamente
+documentais ou de governança, sem artefato de aplicativo, não forçam novo build
+nem novo Preview.
+
+Enquanto a distribuição usar assinatura ad-hoc e não houver notarização, a
+publicação é necessariamente prerelease no formato `vX.Y.Z-preview.N`. Tag
+estável não será criada nesse fluxo. Cada tag e seus assets são imutáveis: uma
+publicação posterior recebe novo identificador e nunca reutiliza tag nem
+sobrescreve DMG ou sidecar já publicados.
+
+Como a publicação anterior foi `1.0.0 Preview 6`, esta entrega de fila e atalhos
+`Ready to Merge` é candidata a `1.0.0 Preview 7`, com build 8. A publicação
+permanece condicionada à integração no `main`. Os gates de código, distribuição
+e QA foram executados novamente com os metadados finais dessa candidata.
+
+Foram descartadas a mudança automática da linha SemVer a cada entrega Preview,
+pois ela rompe a sequência de candidatas já publicada; a atualização de uma tag
+Preview existente, que quebra a rastreabilidade de binário e checksum; e uma
+tag estável para um artefato ad-hoc, que sugeriria garantias de assinatura e
+notarização ausentes.
