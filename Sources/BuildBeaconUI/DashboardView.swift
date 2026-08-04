@@ -516,6 +516,11 @@ private enum DashboardFilter: String, CaseIterable, Identifiable {
     }
 }
 
+private struct DashboardRepositoryRowContentIdentity: Hashable {
+    let monitorID: MonitorID
+    let layoutRevision: Int
+}
+
 private struct MonitorDashboardRow: View {
     let observation: MonitorObservation
     let refreshIntervalSeconds: Int
@@ -537,6 +542,14 @@ private struct MonitorDashboardRow: View {
             fallbackBranchName: observation.monitor.id.target.displayName,
             approvalDetectedAt: approvalDetectedAt
         )
+    }
+
+    private var hasInlineAction: Bool {
+        if let run = observation.lastKnownRun,
+           PipelineDetailPresentation.shouldShowApprovalAction(for: run) {
+            return true
+        }
+        return mergeReadiness.hasAction
     }
 
     var body: some View {
@@ -679,7 +692,13 @@ private struct MonitorDashboardRow: View {
             .frame(width: DashboardRepositoryRowMetrics.metadataColumnWidth, alignment: .trailing)
         }
         .padding(.vertical, 5)
-        .frame(minHeight: DashboardRepositoryRowMetrics.minimumHeight)
+        .frame(minHeight: DashboardRepositoryRowMetrics.minimumHeight(hasInlineAction: hasInlineAction))
+        .id(
+            DashboardRepositoryRowContentIdentity(
+                monitorID: observation.monitor.id,
+                layoutRevision: DashboardRepositoryRowMetrics.layoutRevision(hasInlineAction: hasInlineAction)
+            )
+        )
         .listRowBackground(isUnseen ? Color.accentColor.opacity(0.08) : Color.clear)
         .accessibilityElement(children: .contain)
         .accessibilityValue(summary.accessibilityLabel ?? state.title)

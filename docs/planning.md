@@ -2528,3 +2528,120 @@ Critérios antes de publicação:
 Estado: gates de código, distribuição e QA concluídos para `1.0.0` build 8.
 Entrega integrada no `main` e publicada como `v1.0.0-preview.7`, com DMG e
 sidecar SHA-256 verificados.
+
+### 28.31 Correção planejada: CTA inline não pode recortar a linha
+
+Escopo e ownership:
+
+- UI do dashboard: aplicar altura de 64 pontos à linha sem ação inline e 84
+  pontos à linha que exibe CTA contextual de PR;
+- identidade de layout: variar a identidade somente quando a presença do CTA
+  mudar, para obrigar nova medição após refresh sem mudar a identidade estável
+  do monitor ou da seleção;
+- testes e QA: cobrir ambos os tamanhos, a transição sem CTA para CTA e a
+  preservação da seleção, depois confirmar visualmente duração e CTA legíveis.
+
+Contrato estabilizado:
+
+- duração e CTA inline nunca ocupam a mesma área vertical;
+- `Approve and merge…`, `Enable and review…` e `Set up approve and merge…`
+  recebem o mesmo espaço quando presentes;
+- a linha sem CTA mantém a densidade atual de 64 pontos;
+- uma atualização de layout não remove seleção, não abre ou fecha janela e não
+  altera estado de filtro, favorito ou ação;
+- a alteração não amplia capacidade de mutação nem modifica o fluxo de
+  aprovação e merge.
+
+Critérios de aceite:
+
+- item sem ação inline mede 64 pontos;
+- item com ação inline mede 84 pontos e mostra integralmente duração e CTA;
+- refresh que revela ou remove CTA força a nova medida correta;
+- o monitor selecionado permanece selecionado após a transição de layout;
+- testes de apresentação e interação cobrem a regressão, e o QA visual não
+  mostra texto ou controle encavalado, recortado ou fora da altura da linha.
+
+Gates previstos:
+
+- testes focados de apresentação e organização do dashboard;
+- suíte completa, build release e `git diff --check`;
+- build universal, assinatura, DMG, SHA-256 e upgrade local preservando a
+  configuração existente;
+- QA na aplicação instalada com uma PR que revele CTA inline após refresh.
+
+Estado: UI e testes implementados. A suíte completa executou 331 testes, com 3
+integrações opt-in omitidas e nenhuma falha; o build release e
+`git diff --check` foram aprovados. O build 9 universal, a assinatura estável,
+o DMG e o SHA-256 passaram; a instalação preservou conta e 11 monitores, e o QA
+confirmou os CTAs completos em linha normal e selecionada.
+
+### 28.32 Promoção local do build 9: assinatura estável e rollback validado
+
+Contexto verificado antes da nova tentativa:
+
+- o build 9 ad-hoc passou os gates de código e empacotamento, mas sua promoção
+  local foi interrompida porque a autorização existente no Keychain permaneceu
+  vinculada ao designated requirement e ao CDHash do build 8;
+- o rollback pareado para build 8 e schema 5 foi concluído e validado;
+- o item Keychain não foi exportado, copiado, removido, recriado ou alterado.
+
+Decisão e escopo:
+
+- preparar a promoção local com uma identidade de assinatura local estável,
+  mantida apenas na máquina e nunca versionada, nomeada em documentação pública
+  ou exposta em logs;
+- manter a Preview pública como artefato ad-hoc e não notarizado. A identidade
+  local estável atende somente à continuidade de upgrade local;
+- não modificar credenciais nem realizar qualquer nova operação no Keychain;
+- se o macOS solicitar autorização, interromper a promoção e devolver o fluxo
+  ao usuário para confirmação explícita;
+- só aceitar a instalação após confirmar que a conta esperada e os 11 monitores
+  estão presentes no bundle novo.
+
+Critérios de aceite:
+
+- o build instalado abre sobre a persistência preservada, sem limpar nem
+  reconstruir a configuração;
+- a conta esperada e os 11 monitores estão disponíveis depois do upgrade;
+- na presença de prompt de autorização, não há promoção automática nem
+  declaração de sucesso antes do handoff ao usuário;
+- rollback continua possível como par de aplicativo e configuração compatível;
+- a documentação e os artefatos públicos não contêm nome, configuração ou
+  material de identidade de assinatura local.
+
+Estado: promoção concluída. O build 9 usa assinatura local estável, abriu sobre
+schema 5 com conta e 11 monitores preservados e concluiu um refresh manual. O
+item Keychain não foi exportado, copiado, removido, recriado ou substituído.
+
+### 28.33 Publicação pendente: `1.0.0 Preview 8`, build 9
+
+Classificação da entrega:
+
+- versão candidata: `1.0.0 Preview 8`;
+- tag candidata: `v1.0.0-preview.8`;
+- build candidato: `9`;
+- motivo: corrigir o clipping do CTA inline sem alterar a linha SemVer `1.0.0`.
+
+Evidências concluídas:
+
+- 331 testes executados, três integrações opt-in omitidas e nenhuma falha;
+- build release e `git diff --check` aprovados;
+- bundle universal, verificação estrita de assinatura, DMG e sidecar SHA-256
+  aprovados;
+- QA do build local instalado, assinado com identidade estável somente no Mac,
+  confirmou a preservação da configuração e os CTAs íntegros em linha normal e
+  selecionada.
+
+Restrições de publicação:
+
+- o artefato público segue ad-hoc e não notarizado, portanto a publicação será
+  uma prerelease, não uma release estável;
+- a assinatura local estável existe somente para o upgrade instalado e não deve
+  ser exposta, documentada por nome ou confundida com a assinatura do artefato
+  público;
+- integrar primeiro o commit exato no `main`, confirmar que
+  `v1.0.0-preview.8` ainda não existe e publicar DMG e SHA-256 novos, sem
+  substituir tags ou assets anteriores.
+
+Estado: candidata pronta para commit, integração e publicação. A release ainda
+não foi criada.

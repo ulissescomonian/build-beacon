@@ -1750,7 +1750,35 @@ exportar, copiar ou inspecionar segredos. O backup recuperável manteve diretór
 e atualizando, inclusive o CTA seguro na linha e na toolbar para PRs legadas
 sem contexto, sem fabricar uma alegação de prontidão.
 
-### 21.30 Versionamento de entregas e Preview ad-hoc
+### 21.30 Altura estável para CTA inline nas linhas do dashboard
+
+**Decisão em 4 de agosto de 2026.** A linha compacta do dashboard permanece
+com 64 pontos quando só apresenta o resumo de execução. Quando o item expõe um
+CTA inline contextual de pull request, sua altura passa a 84 pontos. Esse espaço
+é reservado para a ação sem sobrepor a duração, evitando que um refresh que
+revele `Approve and merge…`, `Enable and review…` ou `Set up approve and
+merge…` produza texto recortado ou controles parcialmente visíveis.
+
+A identidade de layout da linha deve incluir a presença da ação inline. A
+transição entre uma linha sem CTA e uma linha com CTA invalida somente a medida
+visual daquela linha, obrigando o `List` a recalcular sua altura. A identidade
+de seleção permanece baseada no monitor, portanto a atualização não deve
+desselecionar o item, recriar a janela nem alterar filtros, favoritos ou o
+estado do dashboard.
+
+Foram descartadas três alternativas: manter a altura fixa de 64 pontos e
+reduzir ou truncar a ação, pois a ação deixa de estar compreensível e
+acionável; usar altura grande para todas as linhas, pois reduz demasiadamente a
+densidade do monitoramento; e deslocar o CTA para o detalhe somente, pois
+elimina o atalho operacional justamente introduzido para a PR verde.
+
+A correção é puramente de apresentação. Ela não altera a descoberta de
+candidatas, o contrato de Action Mode, os preflights, a confirmação humana ou
+qualquer mutação remota. A validação deve cobrir a altura nos dois estados, a
+transição em refresh e a estabilidade da seleção, seguida de QA visual com uma
+linha que receba CTA após a duração.
+
+### 21.31 Versionamento de entregas e Preview ad-hoc
 
 **Decisão em 3 de agosto de 2026.** Toda publicação no GitHub que contenha uma
 mudança de aplicativo incrementa o número de build e o ordinal Preview da linha
@@ -1775,3 +1803,67 @@ pois ela rompe a sequência de candidatas já publicada; a atualização de uma 
 Preview existente, que quebra a rastreabilidade de binário e checksum; e uma
 tag estável para um artefato ad-hoc, que sugeriria garantias de assinatura e
 notarização ausentes.
+
+### 21.32 Promoção local e continuidade de acesso ao Keychain
+
+**Decisão em 4 de agosto de 2026.** A candidata local do build 9 passou os
+gates de código e empacotamento ad-hoc, mas não foi promovida. Na abertura, o
+Keychain associou a autorização existente ao designated requirement e ao CDHash
+do build 8, portanto o novo bundle não pôde reutilizar aquela autorização sem
+uma interação explícita do usuário. O rollback pareado para o build 8 e schema
+5 foi executado e validado, sem copiar, apagar, exportar ou modificar o item do
+Keychain.
+
+Para upgrades locais que precisem preservar acesso já autorizado, a próxima
+tentativa deve usar uma identidade de assinatura local estável. O nome da
+identidade, sua configuração e quaisquer dados de conta permanecem fora do
+repositório, da documentação pública e dos logs. A assinatura local estável é
+um requisito de promoção no Mac, não uma mudança no modelo de credenciais, e
+não autoriza manipular itens do Keychain.
+
+Build local e Preview pública são verificações distintas. A Preview pública
+continua ad-hoc e não notarizada enquanto o fluxo de distribuição não mudar. A
+promoção local só pode ser aceita depois de abrir o bundle atualizado sobre o
+estado preservado e confirmar a identidade de conta esperada e os 11 monitores.
+Se o macOS pedir nova autorização, a promoção deve parar para confirmação e
+handoff ao usuário, sem aceitar um dashboard desconectado como sucesso.
+
+Foram descartadas três alternativas: aceitar o prompt ou a perda de acesso
+como um upgrade bem-sucedido, pois a aplicação deixa de monitorar o estado já
+configurado; reconstruir, substituir ou duplicar o item Keychain, pois amplia
+indevidamente o escopo e pode perder a autorização do usuário; e tratar a
+assinatura ad-hoc da Preview pública como identidade estável de upgrade, pois o
+requisito de assinatura pode variar entre builds.
+
+Evidência final: o build 9 foi reconstruído com a identidade local estável,
+sem registrar seu nome ou configuração, e seu requisito deixou de ser baseado
+em CDHash. O bundle universal, a assinatura estrita, o DMG e o SHA-256 foram
+verificados novamente. A promoção sobre schema 5 abriu com a conta e os 11
+monitores preservados; um refresh manual terminou com sucesso, comprovando o
+acesso à credencial existente sem alterar o item Keychain. O QA visual confirmou
+os CTAs completos tanto em linhas comuns quanto na linha selecionada.
+
+### 21.33 Candidata pública Preview 8 para a correção de clipping
+
+**Decisão em 4 de agosto de 2026.** A correção que reserva espaço para o CTA
+inline passa a ser a candidata `1.0.0 Preview 8`, build 9, com tag prevista
+`v1.0.0-preview.8`. Ela continua na linha SemVer `1.0.0`: o incremento corrige
+um defeito de apresentação e não altera o contrato público de domínio nem a
+semântica da ação remota.
+
+O build instalado localmente usa assinatura local estável somente para preservar
+a continuidade de acesso já autorizado ao Keychain durante o upgrade. O
+artefato público permanece ad-hoc e não notarizado, portanto será publicado
+somente como prerelease. A identidade local não compõe o DMG público, não é
+registrada neste documento e não cria uma alegação de assinatura Developer ID
+ou notarização.
+
+O escopo foi validado por 331 testes, com três integrações opt-in omitidas e
+nenhuma falha. Build release, `git diff --check`, bundle universal, assinatura
+estrita, DMG, sidecar SHA-256 e QA local também foram concluídos. O QA confirmou
+que duração e CTA ficam completamente legíveis nas linhas normal e selecionada.
+
+A publicação continua pendente: antes de criar a release, o commit exato deve
+ser integrado ao `main`, a inexistência da tag deve ser confirmada e o DMG com
+seu SHA-256 deve ser associado à prerelease nova, sem alterar assets de Preview
+anteriores.
