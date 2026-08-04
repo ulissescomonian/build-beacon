@@ -119,9 +119,9 @@ public struct OnboardingView: View {
             .accessibilityHint("Opens Atlassian in your default browser to create a token")
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Choose Create API token with scopes — not Create API token.")
+                Text("Choose Create API token with scopes, not Create API token.")
                     .font(.subheadline.weight(.semibold))
-                Text("After the name and expiration, select Bitbucket, then search for and enable the four Read scopes below.")
+                Text("After the name and expiration, select Bitbucket, then search for and enable all 18 Read scopes below.")
                     .font(.subheadline)
                 Link("View Atlassian step-by-step guide", destination: TokenSetupGuide.officialInstructionsURL)
                     .font(.subheadline.weight(.medium))
@@ -132,12 +132,12 @@ public struct OnboardingView: View {
             .accessibilityElement(children: .combine)
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Required Bitbucket scopes")
+                Text("Recommended Bitbucket Read scopes")
                     .font(.subheadline.weight(.semibold))
 
-                ForEach(TokenSetupGuide.requiredScopes.indices, id: \.self) { index in
-                    let permission = TokenSetupGuide.requiredPermissions[index]
-                    let scope = TokenSetupGuide.requiredScopes[index]
+                ForEach(TokenSetupGuide.recommendedScopes.indices, id: \.self) { index in
+                    let permission = TokenSetupGuide.recommendedPermissions[index]
+                    let scope = TokenSetupGuide.recommendedScopes[index]
 
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "checkmark")
@@ -165,40 +165,6 @@ public struct OnboardingView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                Divider()
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Optional pull request context")
-                        .font(.subheadline.weight(.semibold))
-                    Text("Build Beacon works with the four scopes above. Add this extra Read scope only if you want pull request context when it is available.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "plus.circle")
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(TokenSetupGuide.optionalPullRequestPermission)
-                            .foregroundStyle(.secondary)
-                        Text(TokenSetupGuide.optionalPullRequestScope)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .accessibilityLabel("Optional scope: \(TokenSetupGuide.optionalPullRequestScope)")
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Button(copiedScope == TokenSetupGuide.optionalPullRequestScope ? "Copied" : "Copy") {
-                        copyScope(TokenSetupGuide.optionalPullRequestScope)
-                    }
-                    .controlSize(.small)
-                    .accessibilityLabel("Copy \(TokenSetupGuide.optionalPullRequestScope)")
-                    .accessibilityHint("Copies this optional Bitbucket scope")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Button(didCopyPermissions ? "Scope IDs Copied" : "Copy All Scope IDs") {
@@ -206,7 +172,7 @@ public struct OnboardingView: View {
                 NSPasteboard.general.setString(TokenSetupGuide.permissionsClipboardText, forType: .string)
                 didCopyPermissions = true
             }
-            .accessibilityHint("Copies all required Bitbucket scope IDs")
+            .accessibilityHint("Copies all recommended Bitbucket Read scope IDs")
         }
     }
 

@@ -1585,7 +1585,7 @@ public final class AppModel {
         if let failure = error as? ObservationFailure {
             return switch failure {
             case .invalidCredentials: "Bitbucket could not authenticate this token. In Atlassian, choose Create API token with scopes, select Bitbucket, and use your Atlassian account email."
-            case .insufficientPermissions: "The token is valid but is missing a required Read permission. Create a Bitbucket API token with scopes and enable all four permissions shown above."
+            case .insufficientPermissions: "The token is valid but is missing a required Read permission. Create a Bitbucket API token with scopes and enable all 18 recommended Read permissions shown above."
             case let .rateLimited(retryAt): retryAt.map { "Bitbucket rate limit reached until \($0.formatted())." } ?? "Bitbucket rate limit reached."
             case .offline: "The Mac appears to be offline."
             case .timedOut: "Bitbucket did not respond in time."

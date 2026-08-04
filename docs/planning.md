@@ -1476,9 +1476,9 @@ caso de falha.
 Entregue após feedback de primeira execução:
 
 - URL oficial fixa `https://id.atlassian.com/manage-profile/security/api-tokens`;
-- permissões `User data`, `Workspaces`, `Repositories` e `Pipelines`, todas
-  somente leitura;
-- botões para copiar cada ID exato e ação geral que copia somente os quatro IDs;
+- permissões de monitoramento somente leitura; a recomendação atual abrange as
+  18 permissões Read oferecidas pelo Bitbucket;
+- botões para copiar cada ID exato e ação geral que copia todos os 18 IDs;
 - `PasteButton` nativo e explícito, sem inspeção automática do clipboard;
 - retorno do navegador direciona foco ao `SecureField`;
 - símbolo nativo de farol luminoso no lugar da metáfora visual anterior;
@@ -1498,9 +1498,9 @@ quebram linha sem clipping.
 
 Endurecimento posterior do fluxo escopado: o passo de criação agora instrui
 explicitamente **Create API token with scopes** em vez do token genérico,
-solicita apenas o aplicativo Bitbucket, liga para o guia oficial e mantém a
-allowlist dos quatro escopos Read. Mensagens de credencial/permissão apontam
-para esse mesmo fluxo sem expor códigos internos.
+solicita apenas o aplicativo Bitbucket, liga para o guia oficial e recomenda
+todas as 18 permissões Read atualmente disponíveis. Mensagens de
+credencial/permissão apontam para esse mesmo fluxo sem expor códigos internos.
 
 ### 28.7 Incremento governado — identidade visual unificada
 
@@ -1517,12 +1517,11 @@ opt-in omitida no gate padrão.
 
 ### 28.8 Incremento governado — busca exata de escopos
 
-- allowlist canônica preserva, em ordem, `read:user:bitbucket`,
-  `read:workspace:bitbucket`, `read:repository:bitbucket` e
-  `read:pipeline:bitbucket`;
+- allowlist canônica preserva, em ordem, as 18 permissões `read:` oferecidas
+  pelo Bitbucket, incluindo `read:pullrequest:bitbucket`;
 - cada linha associa descrição humana ao ID técnico monoespaçado e selecionável;
 - cópia individual escreve somente um ID pesquisável no clipboard;
-- cópia geral escreve somente os quatro IDs separados por `\n`;
+- cópia geral escreve todos os 18 IDs separados por `\n`;
 - strings de interface estão completas em inglês e pt-BR; IDs não são
   traduzidos;
 - Write/Admin e material de credencial permanecem proibidos por regressão.
@@ -1658,8 +1657,8 @@ Entregue nesta atualização de governança:
 
 - `/init` reconhece `AGENTS.md` como guia público de contribuição e execução,
   preservando discussion e planning como fontes das decisões e do ledger;
-- README foi alinhado às capacidades entregues: quatro escopos obrigatórios
-  somente leitura, enriquecimento de PR opcional, polling automático e faixa
+- README foi alinhado às capacidades entregues: 18 permissões Read recomendadas
+  para monitoramento, enriquecimento de PR incluído, polling automático e faixa
   configurável de 30 s a 15 min;
 - README inclui a seleção em lote orientada a projeto e o ritmo estável das
   linhas do dashboard, sem prometer webhook, escrita remota ou reutilização de
@@ -2645,3 +2644,26 @@ Restrições de publicação:
 
 Estado: commit integrado ao `main` e prerelease `v1.0.0-preview.8` publicada
 com DMG e sidecar SHA-256 verificados.
+
+### 28.34 Publicação pendente: `1.0.0 Preview 9`, build 10
+
+Classificação da entrega:
+
+- versão candidata: `1.0.0 Preview 9`;
+- tag candidata: `v1.0.0-preview.9`;
+- build candidato: `10`;
+- motivo: recomendar todas as 18 permissões Read no onboarding e evitar perda
+  de dados somente leitura, como o autor de uma pull request.
+
+Critérios de aceite:
+
+- onboarding, cópia de escopos, mensagens, traduções, README e SECURITY usam a
+  mesma lista canônica de 18 permissões Read;
+- o token de monitoramento não solicita permissões Write, Admin ou Delete;
+- o token separado do Action Mode mantém seus três escopos exatos;
+- 331 testes, build release, localizações e `git diff --check` aprovados;
+- bundle universal, assinatura estrita, DMG e sidecar SHA-256 verificados;
+- commit integrado ao `main` antes da criação da tag e da prerelease.
+
+Estado: candidata pronta para commit, integração e publicação. A release ainda
+não foi criada.

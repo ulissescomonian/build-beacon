@@ -10,20 +10,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.2"><img src="https://img.shields.io/badge/version-1.0.0-0A84FF?style=flat-square" alt="Version 1.0.0" /></a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.9"><img src="https://img.shields.io/badge/version-1.0.0-0A84FF?style=flat-square" alt="Version 1.0.0" /></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-1F8A70?style=flat-square" alt="macOS 14 or later" />
   <img src="https://img.shields.io/badge/Universal-arm64%20%2B%20x86__64-6E56CF?style=flat-square" alt="Universal arm64 and x86 64" />
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?style=flat-square" alt="Swift 6.2" />
   <img src="https://img.shields.io/badge/UI-native%20SwiftUI-147EFB?style=flat-square" alt="Native SwiftUI" />
-  <img src="https://img.shields.io/badge/tests-251-34A853?style=flat-square" alt="251 tests" />
+  <img src="https://img.shields.io/badge/tests-331-34A853?style=flat-square" alt="331 tests" />
   <img src="https://img.shields.io/badge/status-Preview-D97706?style=flat-square" alt="Preview status" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-586069?style=flat-square" alt="MIT License" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/download/v1.0.0-preview.2/Build-Beacon-1.0.0-universal.dmg"><strong>Download Build Beacon 1.0.0 for macOS (.dmg)</strong></a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/download/v1.0.0-preview.9/Build-Beacon-1.0.0-universal.dmg"><strong>Download Build Beacon 1.0.0 for macOS (.dmg)</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.2">Release notes &amp; SHA-256 checksum</a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.9">Release notes &amp; SHA-256 checksum</a>
 </p>
 
 > [!IMPORTANT]
@@ -43,7 +43,7 @@ Build Beacon keeps the most useful Bitbucket Pipeline signal where it belongs: i
 - **Useful transitions.** When alerts are enabled and macOS permission is still undetermined, a contextual notification prompt appears after the first monitor is added; local alerts expose system permission, send a test alert, and route to the exact pipeline run that raised the event. Success alerts are optional, disabled by default, and limited to favorites.
 - **Clear run origin and ownership.** Dashboard rows identify whether an execution is a branch run, a pull request, or an unknown source, and show the relevant author when Bitbucket provides it: the PR author for pull-request runs or the commit author for branch runs. Pull-request runs also show their number and source-to-destination route. Relative activity age stays separate from the duration of the latest build.
 - **Helpful context when available.** Pipeline detail can surface commit and pull-request context returned by Bitbucket, with safe links back to those resources. Optional PR details never change the classified origin of a branch run.
-- **Guided least privilege.** The in-app setup explains the exact Bitbucket scoped-token flow and required read permissions.
+- **Guided read-only setup.** The in-app setup explains the exact Bitbucket scoped-token flow and all recommended Read permissions.
 - **Opt-in pull-request action.** An allowlisted monitor can offer **Approve and merge** only for an open, non-draft PR whose current source commit has a succeeded monitored build. It never runs from polling, notifications, deep links, or background work.
 - **Local-first credentials.** Monitoring and Action Mode use separate API tokens in separate macOS Keychain items, never in preferences, configuration files, or plaintext fallbacks.
 
@@ -83,28 +83,36 @@ The **Recent** filter shows the monitors with activity that is new to you and di
 1. Open Build Beacon from the Applications folder or the DMG.
 2. Enter the email address for your Atlassian account.
 3. In the guided setup, open the Atlassian token page and choose **Create API token with scopes**—not the generic API-token option.
-4. Select **Bitbucket**, then grant the four required read scopes below. The optional pull-request scope adds PR context to detail views.
+4. Select **Bitbucket**, then grant all 18 recommended read scopes below. This keeps read-only context, including pull-request authors, available without recreating the token later.
 5. Paste the token into Build Beacon and connect.
 6. In **Settings → Monitoring**, choose a workspace, filter by project, select one or many repositories, choose a common target, and add them together.
 
-### Required Bitbucket scopes
+### Recommended Bitbucket Read scopes
 
-Build Beacon monitoring is read-only. Create a Bitbucket API token with scopes and enable these required permissions:
+Build Beacon monitoring is read-only. Create a Bitbucket API token with scopes and enable all Read permissions currently offered by Bitbucket:
 
 ```text
-read:user:bitbucket
-read:workspace:bitbucket
-read:repository:bitbucket
+read:account
+read:gpg-key:bitbucket
+read:issue:bitbucket
+read:me
+read:package:bitbucket
+read:permission:bitbucket
 read:pipeline:bitbucket
-```
-
-For optional pull-request context in pipeline detail, also enable:
-
-```text
+read:project:bitbucket
 read:pullrequest:bitbucket
+read:repository:bitbucket
+read:runner:bitbucket
+read:snippet:bitbucket
+read:ssh-key:bitbucket
+read:test:bitbucket
+read:user:bitbucket
+read:webhook:bitbucket
+read:wiki:bitbucket
+read:workspace:bitbucket
 ```
 
-Monitoring works normally without that optional scope; only the related PR context is omitted. When Action Mode is used, however, `read:pullrequest:bitbucket` is required on the monitoring token so the dashboard can associate the exact pull request with the monitored pipeline. The separate Action Mode token revalidates the pull request before each mutation. Do not grant Write or Admin scopes to the monitoring token. If a connected account has no workspaces or repositories available, confirm that the token belongs to the intended Atlassian account and that it has access to those Bitbucket resources.
+These are all read-only permissions. Do not grant Write, Admin, or Delete permissions to the monitoring token. The separate Action Mode token revalidates the pull request before each mutation and has its own deliberately narrow scopes. If a connected account has no workspaces or repositories available, confirm that the token belongs to the intended Atlassian account and that it has access to those Bitbucket resources.
 
 ### Optional Action Mode scopes
 
@@ -186,7 +194,7 @@ The security model is intentionally narrow:
 - Optional local history is bounded to the most recent 20 runs per monitor, 500 entries overall, and 30 days. Its persisted entries contain run identity, status, and timing only—not repository names, branches, commit hashes, failure text, URLs, steps, credentials, payloads, or request metadata.
 - The notification ledger is bounded and sanitized to avoid repeat alerts; notifications carry a local route so opening one selects the original monitor and build instead of silently jumping to a newer result.
 - Optional approval reminders retain only opaque account, monitor, and run identifiers plus the minimum transition and timing data needed to deduplicate a 10- or 15-minute local reminder. They are cancelled when the build progresses, the monitor is removed, or the account is disconnected.
-- Monitoring API access uses only the required read scopes listed above, plus the pull-request read scope when the user enables PR context or Action Mode.
+- Monitoring API access uses only the recommended read scopes listed above, including the pull-request read scope.
 - Action Mode stores only the per-monitor opt-in in configuration. This first version keeps no persistent action audit; Bitbucket remains the source of truth for approval and merge state.
 - Disconnecting removes the stored credential, active account configuration, and associated local history.
 - Network, rate-limit, malformed-response, and authentication failures are surfaced as actionable states instead of being silently treated as healthy.
@@ -198,11 +206,11 @@ To report a vulnerability privately, see [Security](SECURITY.md). Do not include
 - macOS 14 Sonoma or later
 - Apple silicon or Intel Mac (the packaged app is universal: `arm64` and `x86_64`)
 - A Bitbucket Cloud account with access to the workspaces and repositories you want to monitor
-- A scoped Bitbucket API token with the required read permissions
+- A scoped Bitbucket API token with all recommended Read permissions
 
 ## Install from a release
 
-1. Download the DMG from the [Build Beacon 1.0.0 Preview 2 release](https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.2).
+1. Download the DMG from the [Build Beacon 1.0.0 Preview 9 release](https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.9).
 2. Download the matching `.sha256` file and verify it from the download directory:
 
    ```bash
@@ -299,7 +307,7 @@ The tests cover API mapping and transport behavior, lifecycle and adaptive polli
 | No workspace appears | Revalidate the account, confirm the token uses **Create API token with scopes**, and verify `read:workspace:bitbucket`. The connected account must also belong to or have access to a workspace. |
 | No repository appears | Select a workspace first, then confirm `read:repository:bitbucket` and repository access for that account. |
 | Authentication fails | Use the Atlassian account email and a newly created scoped Bitbucket token. Generic API tokens are not a substitute for a Bitbucket API token with scopes. |
-| Permission warning | Confirm all four required `read:*:bitbucket` scopes are present; do not add Write/Admin scopes to solve a read-only requirement. |
+| Permission warning | Confirm all 18 recommended `read:*` scopes are present; do not add Write, Admin, or Delete permissions to solve a read-only requirement. |
 | Status is stale or unavailable | Check network connectivity and try **Refresh Now**. The app retains the last known state when a safe current result cannot be obtained. |
 | Notifications do not appear | Enable alerts in **Settings → Refresh**, check the displayed macOS permission state, then use the built-in test notification. |
 | A notification opens an older build | This is intentional: the alert routes to the specific build that caused it, even if a newer refresh has since completed. |

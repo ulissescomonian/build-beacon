@@ -983,21 +983,20 @@ A experiência implementada reduz o fluxo a três passos na mesma janela:
 1. informar o e-mail da conta Atlassian;
 2. abrir a página oficial de tokens, escolher explicitamente **Create API token
    with scopes**, selecionar somente o aplicativo **Bitbucket** e copiar a lista
-   exata de quatro permissões somente leitura;
+   completa de 18 permissões somente leitura;
 3. colar explicitamente o token e conectar.
 
 O token Atlassian genérico criado por **Create API token** não é apresentado
 como compatível: o guia diferencia visualmente os dois fluxos e fornece acesso
-direto às instruções oficiais. Na seleção de escopos, a allowlist do produto é
-`read:user:bitbucket`, `read:workspace:bitbucket`,
-`read:repository:bitbucket` e `read:pipeline:bitbucket`; nenhum aplicativo
-adicional e nenhum escopo Write/Admin são necessários.
+direto às instruções oficiais. Na seleção de escopos, a allowlist do produto
+contém as 18 permissões `read:` atualmente oferecidas pelo Bitbucket; nenhum
+aplicativo adicional e nenhum escopo Write, Admin ou Delete são necessários.
 
 Cada permissão é apresentada com descrição humana e com seu identificador
 canônico monoespaçado e selecionável. Um botão por linha copia somente aquele
-identificador para a busca da Atlassian; a ação de cópia geral contém somente
-os quatro IDs, na ordem recomendada e separados por quebra de linha. Nenhum
-cabeçalho ou texto explicativo contamina o clipboard.
+identificador para a busca da Atlassian; a ação de cópia geral contém todos os
+18 IDs, na ordem recomendada e separados por quebra de linha. Nenhum cabeçalho
+ou texto explicativo contamina o clipboard.
 
 O clipboard nunca é lido automaticamente. O token continua em `SecureField`, é
 apagado do estado de UI após a tentativa e, quando válido, persiste somente no
@@ -1160,9 +1159,9 @@ mudança de comportamento, a preservação de dados locais, a política somente
 leitura e os gates de distribuição. Esse guia não substitui decisões de produto:
 mudanças materiais continuam registradas nesta discussão e no planejamento.
 
-O README passa a descrever o produto tal como ele opera hoje: os quatro escopos
-Bitbucket obrigatórios são somente leitura; o enriquecimento de pull request é
-opcional e requer seu escopo de leitura próprio; polling automático é sempre
+O README passa a descrever o produto tal como ele opera hoje: as 18 permissões
+Read recomendadas do Bitbucket são somente leitura; o enriquecimento de pull
+request usa a permissão de leitura já incluída; polling automático é sempre
 ativo e configura intervalos entre 30 segundos e 15 minutos; a adição em lote
 filtra por projeto e mantém seleção estável; e as linhas da lista possuem ritmo
 visual estável sem impedir expansão por acessibilidade. O README comunica essas
@@ -1866,3 +1865,39 @@ que duração e CTA ficam completamente legíveis nas linhas normal e selecionad
 A candidata foi integrada ao `main` e publicada como
 `v1.0.0-preview.8`. A prerelease contém o DMG público ad-hoc e seu sidecar
 SHA-256 verificado, sem alterar tags ou assets de Previews anteriores.
+
+### 21.34 Token de monitoramento com todas as permissões Read do Bitbucket
+
+**Decisão em 4 de agosto de 2026.** O onboarding passa a recomendar as 18
+permissões Read atualmente oferecidas para tokens de API do Bitbucket e copia
+essa lista completa. O token de monitoramento continua sem permissões Write,
+Admin ou Delete. A decisão evita que recursos de leitura, como a identificação
+do autor de uma pull request, deixem de funcionar porque uma permissão Read foi
+omitida durante a configuração inicial.
+
+Foram descartadas duas alternativas: preservar a lista mínima de quatro
+permissões e oferecer leituras adicionais sob demanda, pois isso já exigiu
+recriações repetidas de token; e usar um token com permissões de escrita, pois
+monitoramento não precisa de capacidade de mutação. O token separado do Action
+Mode mantém seus três escopos exatos e é a única credencial com Write.
+
+A validação cobre a lista canônica, sua ordem, o texto copiado e a ausência de
+qualquer escopo que não seja `read:`. As instruções em inglês e pt-BR, README,
+SECURITY e planejamento devem refletir a mesma lista.
+
+### 21.35 Candidata pública Preview 9 para o onboarding de token completo
+
+**Decisão em 4 de agosto de 2026.** A orientação que recomenda todas as 18
+permissões Read do Bitbucket passa a compor a candidata `1.0.0 Preview 9`,
+build 10, com tag prevista `v1.0.0-preview.9`. A linha SemVer permanece em
+`1.0.0`, pois a alteração corrige a configuração inicial sem mudar contratos
+de dados ou adicionar capacidade remota de escrita.
+
+O artefato público permanece universal, ad-hoc e não notarizado, portanto deve
+ser publicado somente como prerelease. A publicação precisa conter um DMG novo
+e seu sidecar SHA-256, sem reutilizar ou substituir tags e assets anteriores.
+
+A validação executou 331 testes, com três integrações opt-in omitidas e nenhuma
+falha. Build release, localizações, `git diff --check`, bundle universal,
+assinatura estrita, DMG e sidecar SHA-256 foram aprovados. A candidata ainda
+deve ser integrada ao `main` antes da criação da tag e da prerelease.
