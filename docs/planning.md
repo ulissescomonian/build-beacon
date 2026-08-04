@@ -2645,7 +2645,7 @@ Restrições de publicação:
 Estado: commit integrado ao `main` e prerelease `v1.0.0-preview.8` publicada
 com DMG e sidecar SHA-256 verificados.
 
-### 28.34 Publicação pendente: `1.0.0 Preview 9`, build 10
+### 28.34 Publicação concluída: `1.0.0 Preview 9`, build 10
 
 Classificação da entrega:
 
@@ -2665,5 +2665,5 @@ Critérios de aceite:
 - bundle universal, assinatura estrita, DMG e sidecar SHA-256 verificados;
 - commit integrado ao `main` antes da criação da tag e da prerelease.
 
-Estado: candidata pronta para commit, integração e publicação. A release ainda
-não foi criada.
+Estado: commit integrado ao `main` e prerelease `v1.0.0-preview.9` publicada
+com DMG e sidecar SHA-256 verificados.
