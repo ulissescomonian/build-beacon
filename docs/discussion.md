@@ -1863,7 +1863,6 @@ nenhuma falha. Build release, `git diff --check`, bundle universal, assinatura
 estrita, DMG, sidecar SHA-256 e QA local também foram concluídos. O QA confirmou
 que duração e CTA ficam completamente legíveis nas linhas normal e selecionada.
 
-A publicação continua pendente: antes de criar a release, o commit exato deve
-ser integrado ao `main`, a inexistência da tag deve ser confirmada e o DMG com
-seu SHA-256 deve ser associado à prerelease nova, sem alterar assets de Preview
-anteriores.
+A candidata foi integrada ao `main` e publicada como
+`v1.0.0-preview.8`. A prerelease contém o DMG público ad-hoc e seu sidecar
+SHA-256 verificado, sem alterar tags ou assets de Previews anteriores.
