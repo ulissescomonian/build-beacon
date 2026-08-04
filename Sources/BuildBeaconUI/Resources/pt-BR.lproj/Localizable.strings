@@ -377,3 +377,16 @@
 "The saved configuration requires recovery. Build Beacon preserved it and paused configuration changes. Recover the configuration before trying to save again." = "A configuração salva precisa de recuperação. O Build Beacon a preservou e pausou as alterações de configuração. Recupere a configuração antes de tentar salvar novamente.";
 "Build Beacon could not save these configuration changes because the resulting data was invalid. The previously saved configuration was preserved." = "O Build Beacon não conseguiu salvar estas alterações porque os dados resultantes eram inválidos. A configuração salva anteriormente foi preservada.";
 "Build Beacon could not access the local configuration file. Existing data was not reset. Check this Mac's storage permissions and try again." = "O Build Beacon não conseguiu acessar o arquivo local de configuração. Os dados existentes não foram redefinidos. Verifique as permissões de armazenamento deste Mac e tente novamente.";
+"Enable and review…" = "Habilitar e revisar…";
+"Set up approve and merge…" = "Configurar aprovação e merge…";
+"Review and confirm this pull request action" = "Revisar e confirmar esta ação da pull request";
+"Enable pull request actions for this monitor" = "Habilitar ações de pull request para este monitor";
+"Configure Pull Request Actions in Settings" = "Configurar as Ações de Pull Request nos Ajustes";
+"Enables pull request actions for this monitor. You can then review and confirm." = "Habilita as ações de pull request para este monitor. Depois, você poderá revisar e confirmar.";
+"Opens Settings so you can configure Pull Request Actions." = "Abre os Ajustes para você configurar as Ações de Pull Request.";
+"Enable pull request actions for this monitor to review and approve and merge." = "Habilite as ações de pull request para este monitor para revisar, aprovar e fazer merge.";
+"Configure Pull Request Actions in Settings to approve and merge." = "Configure as Ações de Pull Request nos Ajustes para aprovar e fazer merge.";
+"pullRequest.merge.enable.accessibility.format" = "Habilitar ações de pull request para %@";
+"pullRequest.merge.configure.accessibility.format" = "Configurar ações de pull request para %@";
+"Approve and merge pull request" = "Aprovar e fazer merge da pull request";
+"Configure Pull Request Actions in Settings to identify this pull request before approving and merging." = "Configure as Ações de Pull Request nos Ajustes para identificar esta pull request antes de aprovar e fazer merge.";

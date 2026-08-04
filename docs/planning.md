@@ -2407,3 +2407,123 @@ Validações do incremento:
 Estado: implementação concluída e validada para o Build Beacon build 7. A rota
 schema 4 para 5, o upgrade representativo, o rollback compatível e os gates de
 distribuição foram aprovados.
+
+### 28.29 Incremento entregue: fila `Ready to Merge` para PRs verdes
+
+Escopo e ownership:
+
+- domínio e sincronização: separar a candidata de PR verde da autorização de
+  ação, exigir relação confiável entre a execução `succeeded`, PR `OPEN`, não
+  draft, source HEAD e branches antes de declarar `Ready to Merge`;
+- UI: expor badge e filtro/fila de candidatas independentemente de Action Mode
+  ou opt-in, com CTA contextual no resumo e no detalhe;
+- ação: reutilizar, sem ampliar, o contrato isolado de `Approve and merge`,
+  incluindo confirmação e dois preflights; nenhum caminho de polling recebe
+  acesso à credencial write;
+- documentação e testes: registrar estados distinguíveis, localizações en e
+  pt-BR, acessibilidade e regressões de contexto incompleto.
+
+Contrato estabilizado:
+
+- uma candidata pode permanecer visível sem Action Mode, token write ou opt-in
+  por monitor; disponibilidade da fila não concede capacidade de mutação;
+- `Ready to Merge` exige contexto completo e atual da mesma PR `OPEN`, não
+  draft, source HEAD igual ao commit da execução monitorada mais recente com
+  resultado `succeeded`, além de branches identificadas;
+- ausência, ambiguidade ou desatualização de PR, HEAD, branches ou associação
+  com a execução impede a afirmação de prontidão. O item conserva somente o
+  estado que pode ser comprovado e pode oferecer abrir a PR no Bitbucket;
+- ação totalmente configurada e monitor allowlisted: CTA `Approve and merge`;
+  somente opt-in local ausente: CTA `Enable and review`; Action Mode,
+  credencial ou pré-requisito de configuração ausente: CTA `Set up approve and
+  merge`;
+- `Enable and review` e `Set up approve and merge` apenas abrem configuração ou
+  revisão. Não aprovam, não fazem merge e não alteram permissões
+  silenciosamente;
+- o CTA de mutação ainda exige gesto foreground, confirmação e os dois
+  preflights remotos completos imediatamente antes dos POSTs. Status verde,
+  fila, badge, notificação, deep link, relaunch e polling não autorizam nem
+  iniciam mutação;
+- checks de merge, aprovação independente, conflito ou qualquer bloqueio
+  retornado pelo Bitbucket continuam fonte de verdade após os preflights.
+
+Critérios de aceite:
+
+- uma PR verde com contexto completo aparece na fila `Ready to Merge` e no
+  badge mesmo sem Action Mode ou opt-in daquele monitor;
+- uma execução verde sem PR aberta associada, com HEAD divergente, PR draft,
+  contexto ausente ou associação ambígua não é declarada pronta;
+- os três CTAs são escolhidos somente pelo estado configurado e são claros para
+  teclado e VoiceOver, com strings completas em en e pt-BR;
+- o CTA `Approve and merge` não aparece como habilitado para uma candidata que
+  não cumpra o contrato de ação, e todos os caminhos de configuração preservam
+  o estado read-only até a decisão explícita da pessoa usuária;
+- os testes cobrem transições após refresh, perda de elegibilidade, filtros,
+  seleção estável e ausência de mutação em qualquer caminho não foreground;
+- não há novo scope, nova credencial, endpoint write, automerge ou alteração de
+  retenção local neste incremento.
+
+Gates executados:
+
+- testes de modelo e view model para candidata, contexto incompleto e seleção
+  dos três CTAs;
+- testes de apresentação, filtros, acessibilidade e localizações en e pt-BR;
+- regressões de isolamento garantindo que polling, notificações e deep links
+  não conseguem iniciar `Approve and merge`;
+- suíte completa, build release, `git diff --check`, bundle universal, assinatura,
+  DMG, SHA-256 e QA da aplicação instalada.
+
+Validações do incremento:
+
+| Gate | Resultado |
+| --- | --- |
+| fila, CTAs e contexto incompleto | cobertos por testes de modelo, apresentação e interação; PR bem-sucedida sem contexto completo expõe somente `Set up approve and merge…` na linha e na toolbar, sem badge `Ready to Merge` ou target de mutação |
+| corrida de habilitação | single-flight corrigido; teste confirma zero preflight antes de a persistência do opt-in terminar |
+| `swift test --quiet` | 328 testes executados, 0 falhas; 3 integrações opt-in omitidas |
+| `swift build -c release` | aprovado |
+| localizações | catálogos en e pt-BR validados, com paridade de chaves |
+| `git diff --check` | aprovado |
+| bundle e assinatura | build 8 universal `arm64` e `x86_64`; `codesign --verify --deep --strict` refeito e aprovado após as correções |
+| DMG e SHA-256 | DMG, `hdiutil` e sidecar SHA-256 refeitos e aprovados após as correções |
+| upgrade local | build 7/schema 5 para build 8 preservou schema 5, conta, 11 monitores, Action Mode e opt-ins existentes |
+| backup recuperável | diretório `0700`, arquivos `0600` |
+| QA visual | aplicação ativa, dashboard conectado e atualizando; CTA seguro confirmado na linha e na toolbar de PRs legadas sem contexto completo, sem badge de prontidão |
+
+Estado: implementação concluída e validada para o Build Beacon build 8. A fila
+permanece informativa mesmo sem capacidade local de ação, e uma PR verde só é
+declarada pronta quando o contexto atual completo sustenta essa afirmação.
+
+### 28.30 Entrega a validar: `1.0.0 Preview 7`, build 8
+
+Decisão de versionamento aplicada a esta entrega:
+
+- toda publicação GitHub que inclua mudança de aplicativo incrementa o build e
+  o ordinal Preview da linha de produto atual;
+- a versão SemVer do bundle muda somente após decisão explícita de novo marco
+  de produto;
+- push apenas documental ou de governança, sem artefato de aplicativo, não
+  exige versão nova de produto;
+- enquanto a assinatura for ad-hoc e não houver notarização, a publicação usa
+  somente prerelease `vX.Y.Z-preview.N`, sem tag estável;
+- tags e assets publicados são imutáveis: não reutilizar tag nem sobrescrever
+  DMG ou sidecar existentes.
+
+Classificação desta entrega:
+
+- a publicação anterior foi `1.0.0 Preview 6`;
+- versão candidata: `1.0.0 Preview 7`;
+- tag candidata: `v1.0.0-preview.7`;
+- build candidato: `8`.
+
+Critérios antes de publicação:
+
+- confirmar que os gates de código, localizações, distribuição e QA foram
+  executados para o commit exato da entrega;
+- confirmar que a tag candidata não existe e que nenhum asset será substituído;
+- publicar exclusivamente como prerelease enquanto a assinatura não for
+  Developer ID notarizada;
+- associar o DMG e o SHA-256 correspondentes ao build 8, sem alterar releases
+  anteriores.
+
+Estado: gates de código, distribuição e QA concluídos para `1.0.0` build 8.
+Entrega aguardando integração no `main` e publicação como Preview 7.

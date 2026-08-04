@@ -119,16 +119,27 @@ final class DashboardOrganizationTests: XCTestCase {
         XCTAssertEqual(sections[2].observations.map(\.monitor.repositoryName), ["healthy"])
     }
 
-    func testReadyToMergeSectionIsHiddenWithoutActionsCredential() {
+    func testReadyToMergeSectionUsesCandidateEvidenceWithoutActionsCredential() {
         let mergeReady = observation("ready", readyToMerge: true)
 
         let sections = DashboardOrganization.prioritizedSections(
             for: [mergeReady],
-            grouping: .none,
-            pullRequestActionsConfigured: false
+            grouping: .none
         )
 
-        XCTAssertEqual(sections.map(\.id), ["all-pipelines"])
+        XCTAssertEqual(sections.map(\.id), ["ready-to-merge"])
+        XCTAssertEqual(sections[0].observations.map(\.monitor.repositoryName), ["ready"])
+    }
+
+    func testReadyToMergeSectionIncludesCandidateWhenMonitorActionOptInIsDisabled() {
+        let mergeCandidate = observation("ready", readyToMerge: true, actionOptIn: false)
+
+        let sections = DashboardOrganization.prioritizedSections(
+            for: [mergeCandidate],
+            grouping: .none
+        )
+
+        XCTAssertEqual(sections.map(\.id), ["ready-to-merge"])
     }
 
     func testProjectGroupingPlacesUnassignedInOwnSection() {
@@ -216,7 +227,8 @@ final class DashboardOrganizationTests: XCTestCase {
         favorite: Bool = false,
         failure: ObservationFailure? = nil,
         startedAt: Date? = nil,
-        readyToMerge: Bool = false
+        readyToMerge: Bool = false,
+        actionOptIn: Bool? = nil
     ) -> MonitorObservation {
         let id = MonitorID(
             accountID: AccountID(rawValue: "account"),
@@ -232,7 +244,7 @@ final class DashboardOrganizationTests: XCTestCase {
             repositoryName: repository,
             projectName: project,
             isPinned: favorite,
-            allowsPullRequestActions: readyToMerge
+            allowsPullRequestActions: actionOptIn ?? readyToMerge
         )
         let resolvedPhase = phase ?? (readyToMerge ? .succeeded : nil)
         let run = resolvedPhase.map {

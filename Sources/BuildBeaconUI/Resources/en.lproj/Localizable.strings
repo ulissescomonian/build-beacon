@@ -377,3 +377,16 @@
 "The saved configuration requires recovery. Build Beacon preserved it and paused configuration changes. Recover the configuration before trying to save again." = "The saved configuration requires recovery. Build Beacon preserved it and paused configuration changes. Recover the configuration before trying to save again.";
 "Build Beacon could not save these configuration changes because the resulting data was invalid. The previously saved configuration was preserved." = "Build Beacon could not save these configuration changes because the resulting data was invalid. The previously saved configuration was preserved.";
 "Build Beacon could not access the local configuration file. Existing data was not reset. Check this Mac's storage permissions and try again." = "Build Beacon could not access the local configuration file. Existing data was not reset. Check this Mac's storage permissions and try again.";
+"Enable and review…" = "Enable and review…";
+"Set up approve and merge…" = "Set up approve and merge…";
+"Review and confirm this pull request action" = "Review and confirm this pull request action";
+"Enable pull request actions for this monitor" = "Enable pull request actions for this monitor";
+"Configure Pull Request Actions in Settings" = "Configure Pull Request Actions in Settings";
+"Enables pull request actions for this monitor. You can then review and confirm." = "Enables pull request actions for this monitor. You can then review and confirm.";
+"Opens Settings so you can configure Pull Request Actions." = "Opens Settings so you can configure Pull Request Actions.";
+"Enable pull request actions for this monitor to review and approve and merge." = "Enable pull request actions for this monitor to review and approve and merge.";
+"Configure Pull Request Actions in Settings to approve and merge." = "Configure Pull Request Actions in Settings to approve and merge.";
+"pullRequest.merge.enable.accessibility.format" = "Enable pull request actions for %@";
+"pullRequest.merge.configure.accessibility.format" = "Configure pull request actions for %@";
+"Approve and merge pull request" = "Approve and merge pull request";
+"Configure Pull Request Actions in Settings to identify this pull request before approving and merging." = "Configure Pull Request Actions in Settings to identify this pull request before approving and merging.";

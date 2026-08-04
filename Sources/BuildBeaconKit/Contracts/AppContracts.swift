@@ -477,6 +477,18 @@ public enum PullRequestMergeEligibilityEvaluator {
     public static func evaluate(_ observation: MonitorObservation) -> PullRequestMergeEligibility {
         let monitor = observation.monitor
         guard monitor.allowsPullRequestActions else { return .ineligible(reason: .actionsDisabled) }
+
+        return PullRequestMergeCandidateEvaluator.evaluate(observation)
+    }
+}
+
+/// Identifies immutable, read-only evidence that a succeeded pipeline belongs
+/// to an open pull request at its current source HEAD. A candidate never grants
+/// permission to mutate the pull request: callers must separately verify the
+/// monitor opt-in and the write-action credential before starting a preflight.
+public enum PullRequestMergeCandidateEvaluator {
+    public static func evaluate(_ observation: MonitorObservation) -> PullRequestMergeEligibility {
+        let monitor = observation.monitor
         guard observation.currentFailure == nil else { return .ineligible(reason: .staleObservation) }
         guard let run = observation.lastKnownRun else { return .ineligible(reason: .noPipelineRun) }
         guard run.phase == .succeeded else { return .ineligible(reason: .pipelineNotSuccessful) }

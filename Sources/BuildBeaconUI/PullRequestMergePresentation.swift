@@ -3,11 +3,23 @@ import Foundation
 
 public struct PullRequestMergeReadinessDisplay: Equatable {
     let target: PullRequestActionTarget?
+    let pullRequestID: Int?
     let badgeTitle: String?
     let detail: String?
     let accessibilityLabel: String?
+    let action: PullRequestMergeReadinessAction?
 
     var isReady: Bool { target != nil }
+    var hasAction: Bool { action != nil }
+}
+
+/// The explicit next step for a succeeded, open pull request at its current
+/// source HEAD. This is presentation-only: only `approveAndMerge` may start
+/// the separate confirmed action flow.
+enum PullRequestMergeReadinessAction: CaseIterable, Equatable {
+    case approveAndMerge
+    case enableAndReview
+    case configureActions
 }
 
 struct PullRequestMergeResultDisplay: Equatable {
@@ -29,44 +41,173 @@ enum PullRequestMergePresentation {
         for observation: MonitorObservation,
         actionsConfigured: Bool = true
     ) -> PullRequestMergeReadinessDisplay {
-        guard actionsConfigured else {
-            return PullRequestMergeReadinessDisplay(
-                target: nil,
-                badgeTitle: nil,
-                detail: nil,
-                accessibilityLabel: nil
-            )
-        }
-        switch PullRequestMergeEligibilityEvaluator.evaluate(observation) {
+        switch PullRequestMergeCandidateEvaluator.evaluate(observation) {
         case let .eligible(target):
             let format = String(
                 localized: "pullRequest.merge.ready.accessibility.format",
                 defaultValue: "Pull request #%lld is ready to merge",
                 bundle: .module
             )
+            let action: PullRequestMergeReadinessAction
+            if !actionsConfigured {
+                action = .configureActions
+            } else if !observation.monitor.allowsPullRequestActions {
+                action = .enableAndReview
+            } else {
+                action = .approveAndMerge
+            }
             return PullRequestMergeReadinessDisplay(
                 target: target,
+                pullRequestID: target.pullRequestID,
                 badgeTitle: String(localized: "Ready to merge", bundle: .module),
-                detail: String(localized: "All merge prerequisites are available.", bundle: .module),
-                accessibilityLabel: String(format: format, Int64(target.pullRequestID))
+                detail: readinessDetail(for: action),
+                accessibilityLabel: String(format: format, Int64(target.pullRequestID)),
+                action: action
             )
+        case .ineligible(reason: .missingPullRequestContext):
+            return partialDiscoveryDisplay(for: observation)
         case .ineligible:
             return PullRequestMergeReadinessDisplay(
                 target: nil,
+                pullRequestID: nil,
                 badgeTitle: nil,
                 detail: nil,
-                accessibilityLabel: nil
+                accessibilityLabel: nil,
+                action: nil
             )
         }
     }
 
-    static func actionAccessibilityLabel(target: PullRequestActionTarget, repositoryName: String) -> String {
-        let format = String(
-            localized: "pullRequest.merge.action.accessibility.format",
-            defaultValue: "Approve and merge pull request #%lld for %@",
-            bundle: .module
+    static func actionTitle(_ action: PullRequestMergeReadinessAction) -> String {
+        switch action {
+        case .approveAndMerge:
+            String(localized: "Approve and merge…", bundle: .module)
+        case .enableAndReview:
+            String(localized: "Enable and review…", bundle: .module)
+        case .configureActions:
+            String(localized: "Set up approve and merge…", bundle: .module)
+        }
+    }
+
+    static func actionSymbolName(_ action: PullRequestMergeReadinessAction) -> String {
+        switch action {
+        case .approveAndMerge: "arrow.triangle.merge"
+        case .enableAndReview: "checklist"
+        case .configureActions: "gearshape"
+        }
+    }
+
+    static func actionHelp(_ action: PullRequestMergeReadinessAction) -> String {
+        switch action {
+        case .approveAndMerge:
+            String(localized: "Review and confirm this pull request action", bundle: .module)
+        case .enableAndReview:
+            String(localized: "Enable pull request actions for this monitor", bundle: .module)
+        case .configureActions:
+            String(localized: "Configure Pull Request Actions in Settings", bundle: .module)
+        }
+    }
+
+    static func actionAccessibilityHint(_ action: PullRequestMergeReadinessAction) -> String {
+        switch action {
+        case .approveAndMerge:
+            String(localized: "Opens a confirmation. Nothing is merged until you confirm.", bundle: .module)
+        case .enableAndReview:
+            String(localized: "Enables pull request actions for this monitor. You can then review and confirm.", bundle: .module)
+        case .configureActions:
+            String(localized: "Opens Settings so you can configure Pull Request Actions.", bundle: .module)
+        }
+    }
+
+    static func actionAccessibilityLabel(
+        action: PullRequestMergeReadinessAction,
+        pullRequestID: Int?,
+        repositoryName: String
+    ) -> String {
+        switch action {
+        case .approveAndMerge:
+            if let pullRequestID {
+                let format = String(
+                    localized: "pullRequest.merge.action.accessibility.format",
+                    defaultValue: "Approve and merge pull request #%lld for %@",
+                    bundle: .module
+                )
+                return String(format: format, Int64(pullRequestID), repositoryName)
+            }
+            return String(localized: "Approve and merge pull request", bundle: .module)
+        case .enableAndReview:
+            let format = String(
+                localized: "pullRequest.merge.enable.accessibility.format",
+                defaultValue: "Enable pull request actions for %@",
+                bundle: .module
+            )
+            return String(format: format, repositoryName)
+        case .configureActions:
+            let format = String(
+                localized: "pullRequest.merge.configure.accessibility.format",
+                defaultValue: "Configure pull request actions for %@",
+                bundle: .module
+            )
+            return String(format: format, repositoryName)
+        }
+    }
+
+    static func actionAccessibilityLabel(
+        action: PullRequestMergeReadinessAction,
+        target: PullRequestActionTarget,
+        repositoryName: String
+    ) -> String {
+        actionAccessibilityLabel(
+            action: action,
+            pullRequestID: target.pullRequestID,
+            repositoryName: repositoryName
         )
-        return String(format: format, Int64(target.pullRequestID), repositoryName)
+    }
+
+    static func actionAccessibilityLabel(target: PullRequestActionTarget, repositoryName: String) -> String {
+        actionAccessibilityLabel(
+            action: .approveAndMerge,
+            pullRequestID: target.pullRequestID,
+            repositoryName: repositoryName
+        )
+    }
+
+    private static func partialDiscoveryDisplay(
+        for observation: MonitorObservation
+    ) -> PullRequestMergeReadinessDisplay {
+        guard let run = observation.lastKnownRun,
+              run.phase == .succeeded,
+              case let .pullRequest(id, _, _) = run.origin,
+              let id,
+              id > 0 else {
+            return PullRequestMergeReadinessDisplay(
+                target: nil,
+                pullRequestID: nil,
+                badgeTitle: nil,
+                detail: nil,
+                accessibilityLabel: nil,
+                action: nil
+            )
+        }
+        return PullRequestMergeReadinessDisplay(
+            target: nil,
+            pullRequestID: id,
+            badgeTitle: nil,
+            detail: String(localized: "Configure Pull Request Actions in Settings to identify this pull request before approving and merging.", bundle: .module),
+            accessibilityLabel: nil,
+            action: .configureActions
+        )
+    }
+
+    private static func readinessDetail(for action: PullRequestMergeReadinessAction) -> String {
+        switch action {
+        case .approveAndMerge:
+            String(localized: "All merge prerequisites are available.", bundle: .module)
+        case .enableAndReview:
+            String(localized: "Enable pull request actions for this monitor to review and approve and merge.", bundle: .module)
+        case .configureActions:
+            String(localized: "Configure Pull Request Actions in Settings to approve and merge.", bundle: .module)
+        }
     }
 
     static func strategyTitle(_ strategy: PullRequestMergeStrategy) -> String {

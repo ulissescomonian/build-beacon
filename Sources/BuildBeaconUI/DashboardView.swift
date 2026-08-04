@@ -44,8 +44,7 @@ public struct DashboardView: View {
     }
 
     private func isReadyToMerge(_ observation: MonitorObservation) -> Bool {
-        guard model.pullRequestActionIsConfigured,
-              case .eligible = model.pullRequestMergeEligibility(for: observation) else { return false }
+        guard case .eligible = PullRequestMergeCandidateEvaluator.evaluate(observation) else { return false }
         return true
     }
 
@@ -69,8 +68,7 @@ public struct DashboardView: View {
     private var sections: [DashboardSection] {
         DashboardOrganization.prioritizedSections(
             for: filtered,
-            grouping: model.monitorPresentation.grouping,
-            pullRequestActionsConfigured: model.pullRequestActionIsConfigured
+            grouping: model.monitorPresentation.grouping
         )
     }
 
@@ -178,9 +176,14 @@ public struct DashboardView: View {
                                                 buildNumber: run.buildNumber
                                             )
                                         },
-                                        beginMerge: {
-                                            mergeRepositoryName = "\(observation.monitor.workspaceSlug)/\(observation.monitor.repositorySlug)"
-                                            _ = model.beginPullRequestAction(for: observation)
+                                        performMergeReadinessAction: {
+                                            performMergeReadinessAction(
+                                                mergeReadiness: PullRequestMergePresentation.readiness(
+                                                    for: observation,
+                                                    actionsConfigured: model.pullRequestActionIsConfigured
+                                                ),
+                                                observation: observation
+                                            )
                                         },
                                         toggleFavorite: {
                                             withAnimation(
@@ -239,9 +242,14 @@ public struct DashboardView: View {
                             buildNumber: run.buildNumber
                         )
                     },
-                    beginMerge: {
-                        mergeRepositoryName = "\(selected.monitor.workspaceSlug)/\(selected.monitor.repositorySlug)"
-                        _ = model.beginPullRequestAction(for: selected)
+                    performMergeReadinessAction: {
+                        performMergeReadinessAction(
+                            mergeReadiness: PullRequestMergePresentation.readiness(
+                                for: selected,
+                                actionsConfigured: model.pullRequestActionIsConfigured
+                            ),
+                            observation: selected
+                        )
                     },
                     openCommit: model.openCommitURL,
                     openPullRequest: model.openPullRequestURL
@@ -397,9 +405,10 @@ public struct DashboardView: View {
         case .approval:
             return model.sortedObservations.count { $0.lastKnownRun?.phase == .awaitingApproval }
         case .readyToMerge:
-            guard model.pullRequestActionIsConfigured else { return 0 }
             return model.sortedObservations.count {
-                if case .eligible = model.pullRequestMergeEligibility(for: $0) { true } else { false }
+                guard $0.lastKnownRun?.phase != .awaitingApproval else { return false }
+                if case .eligible = PullRequestMergeCandidateEvaluator.evaluate($0) { return true }
+                return false
             }
         case .all, .attention, .running:
             return nil
@@ -455,6 +464,25 @@ public struct DashboardView: View {
             model.dismissPullRequestActionSheet()
         }
     }
+
+    private func performMergeReadinessAction(
+        mergeReadiness: PullRequestMergeReadinessDisplay,
+        observation: MonitorObservation
+    ) {
+        guard let action = mergeReadiness.action else { return }
+        switch action {
+        case .approveAndMerge:
+            mergeRepositoryName = "\(observation.monitor.workspaceSlug)/\(observation.monitor.repositorySlug)"
+            _ = model.beginPullRequestAction(for: observation)
+        case .enableAndReview:
+            mergeRepositoryName = "\(observation.monitor.workspaceSlug)/\(observation.monitor.repositorySlug)"
+            Task {
+                _ = await model.enablePullRequestActionsAndBeginReview(for: observation)
+            }
+        case .configureActions:
+            openSettings()
+        }
+    }
 }
 
 private enum DashboardFilter: String, CaseIterable, Identifiable {
@@ -496,7 +524,7 @@ private struct MonitorDashboardRow: View {
     let isUnseen: Bool
     let isFavoriteToggleDisabled: Bool
     let openApproval: () -> Void
-    let beginMerge: () -> Void
+    let performMergeReadinessAction: () -> Void
     let toggleFavorite: () -> Void
 
     private var state: ObservationVisualState {
@@ -589,22 +617,27 @@ private struct MonitorDashboardRow: View {
                     .help("Open this pending approval in Bitbucket")
                     .accessibilityLabel("Open approval in Bitbucket for \(observation.monitor.repositoryName)")
                     .accessibilityHint("Opens the pending build approval in Bitbucket")
-                } else if let target = mergeReadiness.target {
+                } else if mergeReadiness.hasAction,
+                          let action = mergeReadiness.action {
                     Button {
-                        beginMerge()
+                        performMergeReadinessAction()
                     } label: {
-                        Label("Approve and merge…", systemImage: "arrow.triangle.merge")
+                        Label(
+                            PullRequestMergePresentation.actionTitle(action),
+                            systemImage: PullRequestMergePresentation.actionSymbolName(action)
+                        )
                             .font(.caption.weight(.semibold))
                     }
                     .buttonStyle(.borderless)
-                    .help("Review and confirm this pull request action")
+                    .help(PullRequestMergePresentation.actionHelp(action))
                     .accessibilityLabel(
                         PullRequestMergePresentation.actionAccessibilityLabel(
-                            target: target,
+                            action: action,
+                            pullRequestID: mergeReadiness.pullRequestID,
                             repositoryName: observation.monitor.repositoryName
                         )
                     )
-                    .accessibilityHint("Opens a confirmation. Nothing is merged until you confirm.")
+                    .accessibilityHint(PullRequestMergePresentation.actionAccessibilityHint(action))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

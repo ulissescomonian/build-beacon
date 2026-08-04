@@ -123,15 +123,13 @@ enum DashboardOrganization {
     /// for both the approval items themselves and every remaining repository.
     static func prioritizedSections(
         for observations: [MonitorObservation],
-        grouping: MonitorPresentationPreferences.Grouping,
-        pullRequestActionsConfigured: Bool = true
+        grouping: MonitorPresentationPreferences.Grouping
     ) -> [DashboardSection] {
         let approvals = observations.filter { $0.lastKnownRun?.phase == .awaitingApproval }
         let approvalIDs = Set(approvals.map(\.monitor.id))
         let mergeReady = observations.filter {
-            guard pullRequestActionsConfigured else { return false }
             guard !approvalIDs.contains($0.monitor.id) else { return false }
-            if case .eligible = PullRequestMergeEligibilityEvaluator.evaluate($0) { return true }
+            if case .eligible = PullRequestMergeCandidateEvaluator.evaluate($0) { return true }
             return false
         }
         let priorityIDs = approvalIDs.union(mergeReady.map(\.monitor.id))
