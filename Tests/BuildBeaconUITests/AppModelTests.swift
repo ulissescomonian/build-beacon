@@ -134,6 +134,205 @@ final class AppModelTests: XCTestCase {
         assertNoConfigurationErrorLeak(in: model.errorMessage)
     }
 
+    func testSuccessfulRefreshWithoutPipelineRunKeepsHeaderNeutral() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "without-run", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        let completedAt = Date()
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: completedAt.addingTimeInterval(-2),
+            completedAt: completedAt,
+            reason: .scheduled,
+            observations: [monitor.id: MonitorObservation(
+                monitor: monitor,
+                attemptedAt: completedAt,
+                lastSuccessfulObservationAt: completedAt
+            )],
+            // A monitor without a run can legitimately participate in an
+            // aggregate unavailable state. That is not a refresh failure.
+            aggregateState: .unavailable
+        )
+
+        await model.refresh()
+
+        XCTAssertTrue(model.freshnessText.hasPrefix(localizedRefreshPrefix("Updated %@")))
+        XCTAssertNil(model.refreshStatusAlertText)
+        XCTAssertFalse(model.hasRefreshObservationFailure)
+    }
+
+    func testAllOfflineRefreshFailuresPreserveLastSuccessfulHeaderTimestampAndExposeOfflineAlert() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "offline", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        let lastSuccessfulAt = Date().addingTimeInterval(-60)
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: Date(),
+            completedAt: Date(),
+            reason: .scheduled,
+            observations: [monitor.id: MonitorObservation(
+                monitor: monitor,
+                attemptedAt: Date(),
+                lastSuccessfulObservationAt: lastSuccessfulAt,
+                currentFailure: .offline
+            )],
+            aggregateState: .unavailable
+        )
+
+        await model.refresh()
+
+        XCTAssertTrue(model.freshnessText.hasPrefix(localizedRefreshPrefix("Last successful update %@")))
+        XCTAssertEqual(
+            model.refreshStatusAlertText,
+            String(localized: "Offline · showing last known results", bundle: .module)
+        )
+        XCTAssertTrue(model.hasRefreshObservationFailure)
+        XCTAssertTrue(model.hasOnlyOfflineRefreshObservationFailures)
+    }
+
+    func testPartialOfflineRefreshFailureDoesNotClaimTheWholeConnectionIsOffline() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let healthy = monitor(id: "healthy", in: workspace, accountID: model.configuration.account!.id)
+        let offline = monitor(id: "offline", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [healthy, offline]
+        runtime.configuration = model.configuration
+        let completedAt = Date()
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: completedAt.addingTimeInterval(-2),
+            completedAt: completedAt,
+            reason: .scheduled,
+            observations: [
+                healthy.id: MonitorObservation(
+                    monitor: healthy,
+                    attemptedAt: completedAt,
+                    lastSuccessfulObservationAt: completedAt
+                ),
+                offline.id: MonitorObservation(
+                    monitor: offline,
+                    attemptedAt: completedAt,
+                    lastSuccessfulObservationAt: completedAt.addingTimeInterval(-60),
+                    currentFailure: .offline
+                ),
+            ],
+            aggregateState: .unavailable
+        )
+
+        await model.refresh()
+
+        XCTAssertTrue(model.freshnessText.hasPrefix(localizedRefreshPrefix("Last successful update %@")))
+        XCTAssertEqual(
+            model.refreshStatusAlertText,
+            String(format: String(localized: "Could not update %lld monitor", bundle: .module), Int64(1))
+        )
+        XCTAssertTrue(model.hasRefreshObservationFailure)
+        XCTAssertFalse(model.hasOnlyOfflineRefreshObservationFailures)
+    }
+
+    func testRefreshFailureWithoutSuccessfulObservationShowsNoSuccessfulUpdate() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "never-succeeded", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: Date(),
+            completedAt: Date(),
+            reason: .scheduled,
+            observations: [monitor.id: MonitorObservation(
+                monitor: monitor,
+                attemptedAt: Date(),
+                currentFailure: .offline
+            )],
+            aggregateState: .unavailable
+        )
+
+        await model.refresh()
+
+        XCTAssertEqual(model.freshnessText, String(localized: "No successful update", bundle: .module))
+        XCTAssertTrue(model.hasRefreshObservationFailure)
+    }
+
+    func testStaleRefreshDataShowsExplicitStalenessAlertWithoutClaimingAConnectionFailure() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "stale", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        let completedAt = Date().addingTimeInterval(-600)
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: completedAt.addingTimeInterval(-2),
+            completedAt: completedAt,
+            reason: .scheduled,
+            observations: [monitor.id: MonitorObservation(
+                monitor: monitor,
+                attemptedAt: completedAt,
+                lastSuccessfulObservationAt: completedAt
+            )],
+            aggregateState: .stale
+        )
+
+        await model.refresh()
+
+        XCTAssertTrue(model.freshnessText.hasPrefix(localizedRefreshPrefix("Updated %@")))
+        XCTAssertEqual(
+            model.refreshStatusAlertText,
+            String(localized: "Pipeline data is out of date", bundle: .module)
+        )
+        XCTAssertFalse(model.hasRefreshObservationFailure)
+        XCTAssertTrue(model.hasStaleRefreshData)
+    }
+
+    func testStaleRefreshDataDoesNotDependOnAggregateStatePrecedence() async {
+        let (model, runtime, workspace) = makeConnectedModel()
+        let monitor = monitor(id: "stale-with-attention", in: workspace, accountID: model.configuration.account!.id)
+        model.configuration.monitors = [monitor]
+        runtime.configuration = model.configuration
+        let completedAt = Date().addingTimeInterval(-600)
+        runtime.refreshSnapshot = MonitoringSnapshot(
+            cycleID: UUID(),
+            startedAt: completedAt.addingTimeInterval(-2),
+            completedAt: completedAt,
+            reason: .scheduled,
+            observations: [monitor.id: MonitorObservation(
+                monitor: monitor,
+                attemptedAt: completedAt,
+                lastSuccessfulObservationAt: completedAt
+            )],
+            // Attention can take precedence over staleness in aggregate state.
+            // The refresh header must derive freshness from observation timestamps.
+            aggregateState: .attentionRequired
+        )
+
+        await model.refresh()
+
+        XCTAssertEqual(
+            model.refreshStatusAlertText,
+            String(localized: "Pipeline data is out of date", bundle: .module)
+        )
+        XCTAssertTrue(model.hasStaleRefreshData)
+    }
+
+    func testRefreshStateIsObservableWhileARefreshIsInProgress() async {
+        let (model, runtime, _) = makeConnectedModel()
+        runtime.suspendsRefresh = true
+
+        let refresh = Task { @MainActor in
+            await model.refresh()
+        }
+        await runtime.waitForRefresh()
+
+        XCTAssertTrue(model.isRefreshing)
+
+        runtime.resumeRefresh()
+        await refresh.value
+
+        XCTAssertFalse(model.isRefreshing)
+    }
+
     func testConfigurationStoreMessagesExistInEnglishAndBrazilianPortugueseWithCatalogParity() throws {
         let keys = [
             "Build Beacon could not read the saved configuration. A recovery copy was preserved, and configuration changes are paused until it is recovered.",
@@ -141,6 +340,16 @@ final class AppModelTests: XCTestCase {
             "The saved configuration requires recovery. Build Beacon preserved it and paused configuration changes. Recover the configuration before trying to save again.",
             "Build Beacon could not save these configuration changes because the resulting data was invalid. The previously saved configuration was preserved.",
             "Build Beacon could not access the local configuration file. Existing data was not reset. Check this Mac's storage permissions and try again.",
+            "Never updated",
+            "Updated %@",
+            "Last successful update %@",
+            "No successful update",
+            "Refreshing pipelines",
+            "Automatic pipeline updates",
+            "Offline · showing last known results",
+            "Could not update %lld monitor",
+            "Could not update %lld monitors",
+            "Pipeline data is out of date",
         ]
         let english = try localizedCatalog("en")
         let portuguese = try localizedCatalog("pt-BR")
@@ -1785,6 +1994,10 @@ final class AppModelTests: XCTestCase {
         return (model, runtime, workspace)
     }
 
+    private func localizedRefreshPrefix(_ format: String) -> String {
+        String(format: String(localized: String.LocalizationValue(format), bundle: .module), "")
+    }
+
     private func repository(
         _ name: String,
         in workspace: WorkspaceInfo,
@@ -1999,6 +2212,7 @@ private final class RuntimeStub: BuildBeaconRuntime {
     var refreshCalls = 0
     var refreshReasons: [RefreshReason] = []
     var refreshSnapshot: MonitoringSnapshot?
+    var suspendsRefresh = false
     var history: [MonitorID: [PipelineHistoryEntry]] = [:]
     var notificationStatus = NotificationPermissionStatus(
         authorization: .notDetermined,
@@ -2016,6 +2230,8 @@ private final class RuntimeStub: BuildBeaconRuntime {
     private var unseenActivitySaveWaiters: [CheckedContinuation<Void, Never>] = []
     private var configurationSaveContinuation: CheckedContinuation<Void, Never>?
     private var configurationSaveWaiters: [CheckedContinuation<Void, Never>] = []
+    private var refreshContinuation: CheckedContinuation<Void, Never>?
+    private var refreshWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(configuration: AppConfiguration) {
         self.configuration = configuration
@@ -2105,7 +2321,29 @@ private final class RuntimeStub: BuildBeaconRuntime {
     func refresh(reason: RefreshReason) async -> MonitoringSnapshot? {
         refreshCalls += 1
         refreshReasons.append(reason)
+        refreshWaiters.forEach { $0.resume() }
+        refreshWaiters = []
+        if suspendsRefresh {
+            await withCheckedContinuation { continuation in
+                refreshContinuation = continuation
+            }
+        }
         return refreshSnapshot
+    }
+
+    func waitForRefresh() async {
+        guard refreshCalls > 0 else {
+            await withCheckedContinuation { continuation in
+                refreshWaiters.append(continuation)
+            }
+            return
+        }
+    }
+
+    func resumeRefresh() {
+        suspendsRefresh = false
+        refreshContinuation?.resume()
+        refreshContinuation = nil
     }
 
     func listWorkspaces(accountID: AccountID) async throws -> [WorkspaceInfo] {

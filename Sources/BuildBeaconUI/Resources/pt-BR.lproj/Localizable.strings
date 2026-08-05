@@ -253,6 +253,16 @@
 "Automatic checks are paused until the connection is restored" = "As verificações automáticas estão pausadas até a conexão ser restaurada";
 "No automatic check is scheduled" = "Nenhuma verificação automática está agendada";
 "Next check %@" = "Próxima verificação %@";
+"Never updated" = "Nunca atualizado";
+"Updated %@" = "Atualizado %@";
+"Last successful update %@" = "Última atualização bem-sucedida %@";
+"No successful update" = "Nenhuma atualização bem-sucedida";
+"Refreshing pipelines" = "Atualizando pipelines";
+"Automatic pipeline updates" = "Atualizações automáticas de pipelines";
+"Offline · showing last known results" = "Sem conexão · exibindo os últimos resultados conhecidos";
+"Could not update %lld monitor" = "Não foi possível atualizar %lld monitor";
+"Could not update %lld monitors" = "Não foi possível atualizar %lld monitores";
+"Pipeline data is out of date" = "Os dados das pipelines estão desatualizados";
 "Authentication required" = "Autenticação necessária";
 "Offline · showing last known result" = "Offline · exibindo o último resultado conhecido";
 "pipeline.detail.startTime.unavailable" = "Horário de início indisponível";

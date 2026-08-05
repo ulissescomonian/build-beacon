@@ -2667,3 +2667,92 @@ Critérios de aceite:
 
 Estado: commit integrado ao `main` e prerelease `v1.0.0-preview.9` publicada
 com DMG e sidecar SHA-256 verificados.
+
+### 28.35 Entregue: semântica explícita do cabeçalho de atualização
+
+Escopo e ownership:
+
+- UI do dashboard, owner da frente de UI: desvincular a apresentação do
+  cabeçalho de `aggregateState`, manter estado neutro para atualização
+  bem-sucedida, prazo da próxima verificação e progresso durante consulta;
+- modelo de apresentação e testes, owner da frente de estado: expor ao
+  cabeçalho somente as informações do ciclo de atualização e os erros reais,
+  sem transformar ausência de execução em falha de conectividade;
+- linhas de monitor e testes de apresentação, owner da frente de UI: conservar
+  o estado de monitor sem execução no contexto da própria linha;
+- documentação, owner desta frente: manter esta seção e a decisão 21.36
+  alinhadas enquanto a implementação estiver em andamento;
+- integração de arquivos compartilhados e estado Git, owner coordenador: fazer
+  a revisão consolidada e executar as validações finais aplicáveis.
+
+Contrato estabilizado:
+
+- após atualização confiável, o cabeçalho usa símbolo e linguagem neutros,
+  mostra a última atualização e a próxima verificação programada;
+- durante consulta, o cabeçalho apresenta progresso sem bloquear a interface;
+- falha de rede, indisponibilidade da API ou dado desatualizado recebem estado
+  e mensagem explícitos, sem alegar que não existe conexão quando esse fato não
+  foi comprovado;
+- `aggregateState` das pipelines não controla o ícone nem a mensagem desse
+  cabeçalho;
+- monitor sem execução conhecida permanece legível como ausência de dados na
+  sua linha e não altera o resumo de conectividade;
+- strings completas em inglês e pt-BR são adicionadas em conjunto, sem montar
+  frases por fragmentos.
+
+Critérios de aceite:
+
+- um monitor sem execução, junto de uma atualização recém-concluída, mantém o
+  cabeçalho neutro e preserva as informações de última atualização e próxima
+  verificação;
+- um estado agregado indisponível sem erro de atualização não usa símbolo de
+  rede em alerta;
+- durante refresh, a indicação de progresso é acessível por teclado e
+  VoiceOver e retorna ao estado neutro ou ao alerta explícito correto;
+- erro de rede, erro de API e dado desatualizado são distinguíveis, com última
+  informação disponível preservada quando houver baseline;
+- os testes cobrem a independência entre estado agregado, ciclo de atualização,
+  monitor sem execução e transições de refresh, com localizações en e pt-BR;
+- filtros, favoritos e seleção não mudam em consequência da nova apresentação
+  do cabeçalho.
+
+Gates executados:
+
+- testes focados de view model e apresentação do dashboard;
+- testes de acessibilidade e paridade de localizações en e pt-BR;
+- suíte completa, build release e `git diff --check` após integração.
+
+Estado: implementação e documentação concluídas. O teste focado executou 81
+casos sem falha. A suíte completa executou 338 testes, com 3 integrações opt-in
+omitidas e nenhuma falha. Build release, paridade das localizações en e pt-BR e
+`git diff --check` foram aprovados. O upgrade local e o rollback pareado
+preservaram uma configuração representativa compatível, sem alterar credenciais
+no Keychain. O QA visual confirmou o dashboard conectado e o novo indicador de
+atualização.
+
+### 28.36 Publicação planejada: `1.0.0 Preview 10`, build 11
+
+Classificação da entrega:
+
+- versão candidata: `1.0.0 Preview 10`;
+- tag candidata: `v1.0.0-preview.10`;
+- build candidato: `11`;
+- motivo: corrigir a semântica do cabeçalho de atualização sem alterar a linha
+  SemVer `1.0.0`.
+
+Critérios de aceite:
+
+- o cabeçalho comunica atualização e agendamento sem reutilizar o símbolo de
+  conectividade do estado agregado;
+- monitor sem execução não simula perda de conexão;
+- falha total, falha parcial e dado desatualizado permanecem explícitos;
+- 338 testes, build release, localizações e `git diff --check` aprovados;
+- bundle universal, assinatura estrita, DMG e sidecar SHA-256 verificados;
+- commit integrado ao `main` antes da tag e da prerelease;
+- README aponta para a nova release sem substituir tags ou assets anteriores.
+
+Estado: candidata local concluída. A suíte executou 338 testes, com 3
+integrações opt-in omitidas e nenhuma falha. Build release, localizações,
+`git diff --check`, bundle universal, assinatura ad-hoc estrita, DMG e sidecar
+SHA-256 foram aprovados. A publicação permanece pendente de integração em
+`main` e confirmação da prerelease e dos dois assets no GitHub.

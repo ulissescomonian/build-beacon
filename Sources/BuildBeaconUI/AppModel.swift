@@ -191,20 +191,74 @@ public final class AppModel {
     }
 
     public var freshnessText: String {
-        guard let snapshot else { return "Never updated" }
+        guard let snapshot else {
+            return String(localized: "Never updated", bundle: .module)
+        }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
         let observations = Array(snapshot.observations.values)
-        let needsReliableTimestamp = snapshot.aggregateState == .stale
-            || snapshot.aggregateState == .unavailable
-            || observations.contains(where: { $0.currentFailure != nil })
-        if needsReliableTimestamp {
-            guard let date = observations.compactMap(\.lastSuccessfulObservationAt).min() else {
-                return "No successful update"
+        if observations.contains(where: { $0.currentFailure != nil }) {
+            guard let lastSuccessfulUpdate = observations.compactMap(\.lastSuccessfulObservationAt).min() else {
+                return String(localized: "No successful update", bundle: .module)
             }
-            return "Last successful update \(formatter.localizedString(for: date, relativeTo: Date()))"
+            let format = String(localized: "Last successful update %@", bundle: .module)
+            return String(
+                format: format,
+                formatter.localizedString(for: lastSuccessfulUpdate, relativeTo: Date())
+            )
         }
-        return "Updated \(formatter.localizedString(for: snapshot.completedAt, relativeTo: Date()))"
+        let format = String(localized: "Updated %@", bundle: .module)
+        return String(format: format, formatter.localizedString(for: snapshot.completedAt, relativeTo: Date()))
+    }
+
+    /// A missing pipeline run is a successful observation and must not be presented
+    /// as a connectivity problem. Only an explicit observation failure belongs here.
+    public var hasRefreshObservationFailure: Bool {
+        snapshot?.observations.values.contains(where: { $0.currentFailure != nil }) ?? false
+    }
+
+    public var hasOnlyOfflineRefreshObservationFailures: Bool {
+        guard let snapshot else { return false }
+        let observations = Array(snapshot.observations.values)
+        guard !observations.isEmpty else { return false }
+        return observations.allSatisfy {
+            if case .offline? = $0.currentFailure { return true }
+            return false
+        }
+    }
+
+    public var hasStaleRefreshData: Bool {
+        guard let snapshot, !hasRefreshObservationFailure else { return false }
+        let now = Date()
+        return snapshot.observations.values.contains {
+            FreshnessPolicy.freshness(
+                of: $0,
+                now: now,
+                refreshIntervalSeconds: refreshIntervalSeconds
+            ) == .stale
+        }
+    }
+
+    /// A concise, localized explanation for an actual monitoring failure. This is
+    /// intentionally independent of `aggregateState`, which also represents
+    /// pipeline states such as no run, running, and approval required.
+    public var refreshStatusAlertText: String? {
+        guard let snapshot else { return nil }
+        let failures = snapshot.observations.values.compactMap(\.currentFailure)
+        if hasOnlyOfflineRefreshObservationFailures {
+            return String(localized: "Offline · showing last known results", bundle: .module)
+        }
+
+        if hasStaleRefreshData {
+            return String(localized: "Pipeline data is out of date", bundle: .module)
+        }
+
+        guard !failures.isEmpty else { return nil }
+
+        let format = String(localized: failures.count == 1
+            ? "Could not update %lld monitor"
+            : "Could not update %lld monitors", bundle: .module)
+        return String(format: format, Int64(failures.count))
     }
 
     public var sortedObservations: [MonitorObservation] {

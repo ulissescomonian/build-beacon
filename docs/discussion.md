@@ -1902,3 +1902,49 @@ falha. Build release, localizações, `git diff --check`, bundle universal,
 assinatura estrita, DMG e sidecar SHA-256 foram aprovados. A candidata foi
 integrada ao `main` e publicada como `v1.0.0-preview.9`, sem alterar tags ou
 assets de Previews anteriores.
+
+### 21.36 Cabeçalho do dashboard comunica atualização, não saúde agregada
+
+**Decisão em 4 de agosto de 2026.** O cabeçalho do dashboard representa somente
+o ciclo de atualização do monitoramento. Quando a última atualização confiável
+foi concluída, ele usa apresentação neutra e informa quando ela ocorreu e quando
+será a próxima verificação. Durante uma consulta em voo, o cabeçalho indica
+progresso. Ele não escolhe símbolo, cor ou mensagem a partir de
+`aggregateState` das pipelines.
+
+Alertas no cabeçalho exigem uma falha de atualização real e explícita. Falha de
+rede, indisponibilidade da API ou resultado local desatualizado devem expor uma
+mensagem específica e manter claros os últimos dados disponíveis. Um monitor
+sem execução conhecida continua sendo estado daquele monitor, com texto neutro
+na própria linha, e não simula desconexão no resumo global.
+
+Foram descartadas três alternativas: manter `wifi.exclamationmark` para qualquer
+estado agregado indisponível, pois confunde ausência de execução com perda de
+conexão; ocultar prazo e resultado da atualização quando existe um monitor sem
+dados, pois remove informação útil sobre o agendamento; e reduzir todos os
+casos a um alerta genérico, pois não orienta a pessoa usuária nem permite
+distinguir falha de rede, API e frescor dos dados.
+
+A decisão preserva o contrato de observação: saúde da pipeline, qualidade da
+observação e ciclo de agendamento são dimensões distintas. Ela não altera o
+polling, o tratamento de erros remoto, a seleção estável, o filtro, favoritos
+ou qualquer capacidade de mutação.
+
+### 21.37 Candidata pública Preview 10 para o cabeçalho de atualização
+
+**Decisão em 4 de agosto de 2026.** A separação entre atualização do dashboard
+e saúde agregada das pipelines passa a compor a candidata `1.0.0 Preview 10`,
+build 11, com tag prevista `v1.0.0-preview.10`. A linha SemVer permanece em
+`1.0.0`, pois a alteração corrige a apresentação sem mudar contratos de dados,
+polling ou capacidade remota.
+
+O artefato público permanece universal, ad-hoc e não notarizado, portanto deve
+ser publicado somente como prerelease. A candidata precisa conter um DMG novo
+e seu sidecar SHA-256 correspondente, sem reutilizar ou substituir tags e
+assets anteriores. A tag deve apontar para o commit integrado em `main`.
+
+A validação local executou 338 testes, com três integrações opt-in omitidas e
+nenhuma falha. Build release, localizações, `git diff --check`, bundle universal
+`arm64` e `x86_64`, assinatura ad-hoc estrita, DMG e sidecar SHA-256 foram
+aprovados. A publicação permanece condicionada à integração do commit exato em
+`main` e à confirmação posterior da tag, prerelease e assets.
