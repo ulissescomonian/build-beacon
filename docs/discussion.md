@@ -1946,5 +1946,6 @@ assets anteriores. A tag deve apontar para o commit integrado em `main`.
 A validação local executou 338 testes, com três integrações opt-in omitidas e
 nenhuma falha. Build release, localizações, `git diff --check`, bundle universal
 `arm64` e `x86_64`, assinatura ad-hoc estrita, DMG e sidecar SHA-256 foram
-aprovados. A publicação permanece condicionada à integração do commit exato em
-`main` e à confirmação posterior da tag, prerelease e assets.
+aprovados. A candidata foi integrada ao `main` e publicada como
+`v1.0.0-preview.10`. A tag aponta para o commit integrado e a prerelease contém
+o DMG e o sidecar SHA-256 verificados, sem alterar releases anteriores.

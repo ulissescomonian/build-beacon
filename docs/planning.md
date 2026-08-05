@@ -2730,7 +2730,7 @@ preservaram uma configuração representativa compatível, sem alterar credencia
 no Keychain. O QA visual confirmou o dashboard conectado e o novo indicador de
 atualização.
 
-### 28.36 Publicação planejada: `1.0.0 Preview 10`, build 11
+### 28.36 Publicação concluída: `1.0.0 Preview 10`, build 11
 
 Classificação da entrega:
 
@@ -2751,8 +2751,9 @@ Critérios de aceite:
 - commit integrado ao `main` antes da tag e da prerelease;
 - README aponta para a nova release sem substituir tags ou assets anteriores.
 
-Estado: candidata local concluída. A suíte executou 338 testes, com 3
-integrações opt-in omitidas e nenhuma falha. Build release, localizações,
+Estado: publicação concluída. A suíte executou 338 testes, com 3 integrações
+opt-in omitidas e nenhuma falha. Build release, localizações,
 `git diff --check`, bundle universal, assinatura ad-hoc estrita, DMG e sidecar
-SHA-256 foram aprovados. A publicação permanece pendente de integração em
-`main` e confirmação da prerelease e dos dois assets no GitHub.
+SHA-256 foram aprovados. O commit candidato foi integrado ao `main`; a tag
+`v1.0.0-preview.10` aponta para esse commit, e a prerelease contém exatamente o
+DMG e o sidecar cujos digests e tamanhos foram verificados após o upload.
