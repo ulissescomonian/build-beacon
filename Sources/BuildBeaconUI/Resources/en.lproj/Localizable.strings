@@ -253,6 +253,16 @@
 "Automatic checks are paused until the connection is restored" = "Automatic checks are paused until the connection is restored";
 "No automatic check is scheduled" = "No automatic check is scheduled";
 "Next check %@" = "Next check %@";
+"Never updated" = "Never updated";
+"Updated %@" = "Updated %@";
+"Last successful update %@" = "Last successful update %@";
+"No successful update" = "No successful update";
+"Refreshing pipelines" = "Refreshing pipelines";
+"Automatic pipeline updates" = "Automatic pipeline updates";
+"Offline · showing last known results" = "Offline · showing last known results";
+"Could not update %lld monitor" = "Could not update %lld monitor";
+"Could not update %lld monitors" = "Could not update %lld monitors";
+"Pipeline data is out of date" = "Pipeline data is out of date";
 "Authentication required" = "Authentication required";
 "Offline · showing last known result" = "Offline · showing last known result";
 "pipeline.detail.startTime.unavailable" = "Start time unavailable";

@@ -815,16 +815,16 @@ private struct DashboardRefreshStatus: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { _ in
             HStack(spacing: 9) {
-                StatusGlyph(
-                    symbol: model.aggregateState.symbolName,
-                    color: model.aggregateState.tint,
-                    label: model.aggregateState.title,
-                    size: 14
-                )
+                refreshIndicator
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.freshnessText)
                         .font(.caption.weight(.medium))
+                    if let alert = model.refreshStatusAlertText {
+                        Label(alert, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
                     Text(nextRefreshText)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -832,16 +832,27 @@ private struct DashboardRefreshStatus: View {
 
                 Spacer()
 
-                if model.isRefreshing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel("Refreshing pipelines")
-                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.bar)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder
+    private var refreshIndicator: some View {
+        if model.isRefreshing {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 14, height: 14)
+                .accessibilityLabel(String(localized: "Refreshing pipelines", bundle: .module))
+        } else {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.secondary)
+                .frame(width: 14, height: 14)
+                .accessibilityLabel(String(localized: "Automatic pipeline updates", bundle: .module))
         }
     }
 
@@ -852,7 +863,7 @@ private struct DashboardRefreshStatus: View {
                 : String(localized: "Connect an account to begin monitoring", bundle: .module)
         }
         guard let nextRefreshAt = snapshot.nextRefreshAt else {
-            return snapshot.aggregateState == .unavailable
+            return model.hasOnlyOfflineRefreshObservationFailures
                 ? String(localized: "Automatic checks are paused until the connection is restored", bundle: .module)
                 : String(localized: "No automatic check is scheduled", bundle: .module)
         }

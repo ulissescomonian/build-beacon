@@ -10,20 +10,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.9"><img src="https://img.shields.io/badge/version-1.0.0-0A84FF?style=flat-square" alt="Version 1.0.0" /></a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.10"><img src="https://img.shields.io/badge/version-1.0.0-0A84FF?style=flat-square" alt="Version 1.0.0" /></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-1F8A70?style=flat-square" alt="macOS 14 or later" />
   <img src="https://img.shields.io/badge/Universal-arm64%20%2B%20x86__64-6E56CF?style=flat-square" alt="Universal arm64 and x86 64" />
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?style=flat-square" alt="Swift 6.2" />
   <img src="https://img.shields.io/badge/UI-native%20SwiftUI-147EFB?style=flat-square" alt="Native SwiftUI" />
-  <img src="https://img.shields.io/badge/tests-331-34A853?style=flat-square" alt="331 tests" />
+  <img src="https://img.shields.io/badge/tests-338-34A853?style=flat-square" alt="338 tests" />
   <img src="https://img.shields.io/badge/status-Preview-D97706?style=flat-square" alt="Preview status" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-586069?style=flat-square" alt="MIT License" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/download/v1.0.0-preview.9/Build-Beacon-1.0.0-universal.dmg"><strong>Download Build Beacon 1.0.0 for macOS (.dmg)</strong></a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/download/v1.0.0-preview.10/Build-Beacon-1.0.0-universal.dmg"><strong>Download Build Beacon 1.0.0 for macOS (.dmg)</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.9">Release notes &amp; SHA-256 checksum</a>
+  <a href="https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.10">Release notes &amp; SHA-256 checksum</a>
 </p>
 
 > [!IMPORTANT]
@@ -210,7 +210,7 @@ To report a vulnerability privately, see [Security](SECURITY.md). Do not include
 
 ## Install from a release
 
-1. Download the DMG from the [Build Beacon 1.0.0 Preview 9 release](https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.9).
+1. Download the DMG from the [Build Beacon 1.0.0 Preview 10 release](https://github.com/ulissescomonian/build-beacon/releases/tag/v1.0.0-preview.10).
 2. Download the matching `.sha256` file and verify it from the download directory:
 
    ```bash
@@ -275,7 +275,7 @@ Packaging creates a local artifact; it does not publish a release, notarize the 
 
 ## Testing
 
-The current suite contains **331 executed tests**, with **0 failures** and **3 opt-in integration tests skipped** when the local environment does not permit them.
+The current suite contains **338 executed tests**, with **0 failures** and **3 opt-in integration tests skipped** when the local environment does not permit them.
 
 ```bash
 swift test
